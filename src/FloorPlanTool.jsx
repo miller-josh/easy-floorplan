@@ -126,6 +126,22 @@ function validateImport(data) {
 }
 function sanitizeFilename(name) { return name.replace(/[^a-zA-Z0-9_\- ]/g, "").replace(/\s+/g, "-").toLowerCase() || "floorplan"; }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ── Feet & inches conversion ──
+// Storage stays in decimal feet everywhere. These only affect display/input.
+function feetToFtIn(v) {
+  const totalInches = Math.round((v || 0) * 12);
+  let ft = Math.floor(totalInches / 12);
+  let inch = totalInches - ft * 12;
+  return { ft, inch };
+}
+function ftInToFeet(ft, inch) {
+  return (parseFloat(ft) || 0) + (parseFloat(inch) || 0) / 12;
+}
+function fmtFtIn(v) {
+  const { ft, inch } = feetToFtIn(v);
+  return inch === 0 ? `${ft}'` : `${ft}'${inch}"`;
+}
 function fmtDate(ts) {
   const diff = Date.now() - ts;
   if (diff < 60000) return "just now";
@@ -145,6 +161,11 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const [tempGridH, setTempGridH] = useState("60");
   const [cellSize, setCellSize] = useState(32);
   const [precision, setPrecision] = useState(0.5);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem("fp_sidebar_width"), 10);
+    return saved >= 240 && saved <= 560 ? saved : 300;
+  });
+  const [resizingSidebar, setResizingSidebar] = useState(false);
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [idCounter, setIdCounter] = useState(1);
@@ -428,6 +449,29 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     }
   }, [dragState, resizeState, shapes, gridW, gridH, cellSize, getGridPos, precision]);
 
+  // Sidebar resize drag
+  useEffect(() => {
+    if (!resizingSidebar) return;
+    const onMove = (e) => {
+      const w = Math.max(240, Math.min(560, e.clientX));
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      setResizingSidebar(false);
+      setSidebarWidth((w) => { localStorage.setItem("fp_sidebar_width", String(w)); return w; });
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [resizingSidebar]);
+
   const handleGridClick = (e) => { if (e.target === e.currentTarget || e.target.dataset.grid) setSelectedId(null); };
   const zoomIn = () => setCellSize(s => Math.min(80, s + 4));
   const zoomOut = () => setCellSize(s => Math.max(12, s - 4));
@@ -459,6 +503,35 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
         onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
     </div>
   );
+
+  // Feet + inches input. Stores decimal feet; inch box steps by the active precision (3" or 6").
+  const FtInInput = ({ valueFeet, onChangeFeet, label, minFeet = 0 }) => {
+    const { ft, inch } = feetToFtIn(valueFeet);
+    const inchStep = Math.round(precision * 12); // 0.25ft -> 3", 0.5ft -> 6"
+    const boxStyle = { width: "100%", padding: "6px 4px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", background: "#f8fafc", outline: "none", textAlign: "center" };
+    const commit = (newFt, newIn) => {
+      let v = ftInToFeet(newFt, newIn);
+      v = Math.max(minFeet, v);
+      onChangeFeet(v);
+    };
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+        <span style={{ fontSize: 11, color: "#64748b", fontFamily: "inherit" }}>{label}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <input type="number" step="1" min={0} value={ft}
+            onChange={(e) => commit(e.target.value, inch)}
+            style={boxStyle}
+            onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
+          <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>′</span>
+          <input type="number" step={inchStep} min={0} value={inch}
+            onChange={(e) => commit(ft, e.target.value)}
+            style={boxStyle}
+            onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
+          <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>″</span>
+        </div>
+      </div>
+    );
+  };
 
   // ── Files panel ──
   const FilesPanel = () => (
@@ -570,29 +643,43 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
       {showFiles && <FilesPanel />}
 
       {/* Sidebar */}
-      <div style={{ width: 300, minWidth: 300, background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ width: sidebarWidth, minWidth: sidebarWidth, background: "#fff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
         {/* Header */}
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              🍕 {designName}
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid #e2e8f0", background: "linear-gradient(180deg, #fafbfc 0%, #ffffff 100%)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: "#FEF3E2", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>🍕</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.2 }} title={designName}>
+                {designName}
+              </div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1, display: "flex", alignItems: "center", gap: 5 }}>
+                {syncing ? (
+                  <span style={{ color: "#3B82F6", fontWeight: 500 }}>● syncing…</span>
+                ) : hasUnsaved ? (
+                  <span style={{ color: "#D97706", fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#F59E0B" }} />unsaved changes
+                  </span>
+                ) : currentDesignId ? (
+                  <span style={{ color: "#16A34A", fontWeight: 500 }}>✓ saved</span>
+                ) : (
+                  <span>not saved yet</span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <button onClick={handleSave} style={primaryActionStyle}>💾 Save</button>
+            <button onClick={() => { setSaveAsMode(true); setSaveAsInput(designName); setShowFiles(true); }} style={actionStyle}>Save As</button>
+            <button onClick={() => { setShowFiles(true); setSaveAsMode(false); }} style={actionStyle}>📂 Open</button>
+            <button onClick={handleExportFile} style={iconActionStyle} title="Export to .json file">⬇️</button>
+            <button onClick={() => fileInputRef.current?.click()} style={iconActionStyle} title="Import .json file">⬆️</button>
+          </div>
+          <div style={{ fontSize: 10, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 7px", background: useCloud ? "#EFF6FF" : "#F1F5F9", color: useCloud ? "#2563EB" : "#64748b", borderRadius: 5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
+              {useCloud ? `☁️ ${userEmail}` : "💾 Local storage"}
             </span>
-            {syncing && <span style={{ fontSize: 10, color: "#3B82F6" }}>syncing...</span>}
-            {hasUnsaved && !syncing && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#F59E0B", flexShrink: 0 }} title="Unsaved changes" />}
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={handleSave} style={saveBtnStyle}>💾 Save</button>
-            <button onClick={() => { setSaveAsMode(true); setSaveAsInput(designName); setShowFiles(true); }} style={saveBtnStyle}>Save As</button>
-            <button onClick={() => { setShowFiles(true); setSaveAsMode(false); }} style={saveBtnStyle}>📂 Open</button>
-            <button onClick={handleExportFile} style={saveBtnStyle} title="Export .json">⬇️</button>
-            <button onClick={() => fileInputRef.current?.click()} style={saveBtnStyle} title="Import .json">⬆️</button>
-          </div>
-          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>{useCloud ? `☁️ ${userEmail}` : "💾 Local storage"}</span>
-            <span>·</span>
-            <span>{currentDesignId ? designName : "Not yet saved"}{hasUnsaved ? " · unsaved" : ""}</span>
             {useCloud && (
-              <button onClick={onSignOut} style={{ marginLeft: "auto", background: "none", border: "none", color: "#94a3b8", fontSize: 10, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>Sign out</button>
+              <button onClick={onSignOut} style={{ marginLeft: "auto", background: "none", border: "none", color: "#94a3b8", fontSize: 10, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", flexShrink: 0 }}>Sign out</button>
             )}
           </div>
         </div>
@@ -645,7 +732,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           {tab === "add" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", gap: 8 }}><DimInput label="Width (ft)" value={newW} onChange={setNewW} min={precision} step={String(precision)} /><DimInput label="Height (ft)" value={newH} onChange={setNewH} min={precision} step={String(precision)} /></div>
+              <div style={{ display: "flex", gap: 8 }}><FtInInput label="Width" valueFeet={parseFloat(newW) || 0} onChangeFeet={v => setNewW(String(Math.max(precision, v)))} minFeet={precision} /><FtInInput label="Height" valueFeet={parseFloat(newH) || 0} onChangeFeet={v => setNewH(String(Math.max(precision, v)))} minFeet={precision} /></div>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 11, color: "#64748b" }}>Label</span>
                 <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder={`Item ${idCounter}`}
@@ -668,19 +755,19 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
                 <div style={{ padding: 8, background: selected.color + "18", borderRadius: 8, border: `1px solid ${selected.color}40`, display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ width: 16, height: 16, borderRadius: 3, background: selected.color }} />
                   <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{selected.label}</span>
-                  <span style={{ fontSize: 11, color: "#64748b", marginLeft: "auto", fontFamily: "monospace" }}>{selected.w}×{selected.h}{selected.rotation ? ` ↻${selected.rotation}°` : ""}</span>
+                  <span style={{ fontSize: 11, color: "#64748b", marginLeft: "auto", fontFamily: "monospace" }}>{fmtFtIn(selected.w)}×{fmtFtIn(selected.h)}{selected.rotation ? ` ↻${selected.rotation}°` : ""}</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontSize: 11, color: "#64748b" }}>Label</span>
                   <input type="text" value={selected.label} onChange={e => updateShape(selected.id, { label: e.target.value })} style={{ padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#f8fafc", outline: "none", fontFamily: "inherit" }} />
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <DimInput label="Width (ft)" value={selected.w} min={precision} step={String(precision)} onChange={v => { const val = Math.max(precision, parseFloat(v) || precision); updateShape(selected.id, { w: val, x: clamp(selected.x, 0, gridW - getRotatedBounds(val, selected.h, selected.rotation).bw) }); }} />
-                  <DimInput label="Height (ft)" value={selected.h} min={precision} step={String(precision)} onChange={v => { const val = Math.max(precision, parseFloat(v) || precision); updateShape(selected.id, { h: val, y: clamp(selected.y, 0, gridH - getRotatedBounds(selected.w, val, selected.rotation).bh) }); }} />
+                  <FtInInput label="Width" valueFeet={selected.w} minFeet={precision} onChangeFeet={v => { const val = Math.max(precision, v); updateShape(selected.id, { w: val, x: clamp(selected.x, 0, gridW - getRotatedBounds(val, selected.h, selected.rotation).bw) }); }} />
+                  <FtInInput label="Height" valueFeet={selected.h} minFeet={precision} onChangeFeet={v => { const val = Math.max(precision, v); updateShape(selected.id, { h: val, y: clamp(selected.y, 0, gridH - getRotatedBounds(selected.w, val, selected.rotation).bh) }); }} />
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <DimInput label="X pos" value={selected.x} min={0} step={String(precision)} onChange={v => updateShape(selected.id, { x: clamp(parseFloat(v) || 0, 0, gridW - getRotatedBounds(selected.w, selected.h, selected.rotation).bw) })} />
-                  <DimInput label="Y pos" value={selected.y} min={0} step={String(precision)} onChange={v => updateShape(selected.id, { y: clamp(parseFloat(v) || 0, 0, gridH - getRotatedBounds(selected.w, selected.h, selected.rotation).bh) })} />
+                  <FtInInput label="X pos" valueFeet={selected.x} minFeet={0} onChangeFeet={v => updateShape(selected.id, { x: clamp(v, 0, gridW - getRotatedBounds(selected.w, selected.h, selected.rotation).bw) })} />
+                  <FtInInput label="Y pos" valueFeet={selected.y} minFeet={0} onChangeFeet={v => updateShape(selected.id, { y: clamp(v, 0, gridH - getRotatedBounds(selected.w, selected.h, selected.rotation).bh) })} />
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <span style={{ fontSize: 11, color: "#64748b" }}>Rotation</span>
@@ -713,7 +800,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
                   <SmallBtn onClick={() => sendToBack(selected.id)} label="To Back" />
                   <SmallBtn onClick={() => deleteShape(selected.id)} label="Delete" color="#EF4444" />
                 </div>
-                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, fontFamily: "monospace" }}>Area: {(selected.w * selected.h).toFixed(1)} sq ft | ({selected.x}, {selected.y}){selected.rotation ? ` | ${selected.rotation}°` : ""}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, fontFamily: "monospace" }}>Area: {(selected.w * selected.h).toFixed(2)} sq ft | ({fmtFtIn(selected.x)}, {fmtFtIn(selected.y)}){selected.rotation ? ` | ${selected.rotation}°` : ""}</div>
               </div>
             ) : (
               <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>
@@ -730,7 +817,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
                 <div key={s.id} onClick={() => { setSelectedId(s.id); setTab("edit"); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, cursor: "pointer", background: selectedId === s.id ? "#f1f5f9" : "transparent", border: selectedId === s.id ? "1px solid #e2e8f0" : "1px solid transparent" }}>
                   <div style={{ width: 14, height: 14, borderRadius: 3, background: s.color, flexShrink: 0 }} />
                   <span style={{ fontSize: 13, color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
-                  <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>{s.w}×{s.h}{s.rotation ? ` ↻${s.rotation}°` : ""}</span>
+                  <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>{fmtFtIn(s.w)}×{fmtFtIn(s.h)}{s.rotation ? ` ↻${s.rotation}°` : ""}</span>
                   <button onClick={e => { e.stopPropagation(); deleteShape(s.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#cbd5e1", fontSize: 14, padding: "0 2px" }}>×</button>
                 </div>
               ))}
@@ -738,15 +825,28 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Grid */}
+        {/* Drag handle to resize sidebar */}
+        <div
+          onMouseDown={(e) => { e.preventDefault(); setResizingSidebar(true); }}
+          onDoubleClick={() => { setSidebarWidth(300); localStorage.setItem("fp_sidebar_width", "300"); }}
+          title="Drag to resize · double-click to reset"
+          style={{
+            position: "absolute", top: 0, right: 0, width: 6, height: "100%",
+            cursor: "col-resize", zIndex: 50,
+            background: resizingSidebar ? "#3B82F6" : "transparent",
+            transition: resizingSidebar ? "none" : "background 0.15s",
+          }}
+          onMouseEnter={(e) => { if (!resizingSidebar) e.currentTarget.style.background = "#bfdbfe"; }}
+          onMouseLeave={(e) => { if (!resizingSidebar) e.currentTarget.style.background = "transparent"; }}
+        />
+      </div>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ padding: "6px 16px", background: "#fff", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "#64748b" }}>
           <span style={{ fontFamily: "monospace" }}>{gridW}′×{gridH}′ = {gridW * gridH} sq ft</span>
           <span style={{ color: "#e2e8f0" }}>|</span>
           <span>1ft = {cellSize}px</span>
-          {selected && <><span style={{ color: "#e2e8f0" }}>|</span><span style={{ color: "#3B82F6", fontWeight: 500 }}>{selected.label} ({selected.w}×{selected.h}{selected.rotation ? ` ${selected.rotation}°` : ""})</span></>}
+          {selected && <><span style={{ color: "#e2e8f0" }}>|</span><span style={{ color: "#3B82F6", fontWeight: 500 }}>{selected.label} ({fmtFtIn(selected.w)}×{fmtFtIn(selected.h)}{selected.rotation ? ` ${selected.rotation}°` : ""})</span></>}
         </div>
 
         <div ref={gridRef} style={{ flex: 1, overflow: "auto", background: "#e8ecf1", cursor: dragState ? "grabbing" : "default" }} onClick={handleGridClick}>
@@ -786,7 +886,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
                     }}>
                       <div style={{ fontSize: Math.max(8,fs), fontWeight: 600, color: s.color, lineHeight: 1.2, padding: 2, pointerEvents: "none", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", fontFamily: "inherit" }}>
                         {s.label}
-                        {pxH>30 && <div style={{ fontSize: Math.max(7,fs-2), fontWeight: 400, opacity: 0.7, fontFamily: "monospace", marginTop: 1 }}>{s.w}×{s.h}</div>}
+                        {pxH>30 && <div style={{ fontSize: Math.max(7,fs-2), fontWeight: 400, opacity: 0.7, fontFamily: "monospace", marginTop: 1 }}>{fmtFtIn(s.w)}×{fmtFtIn(s.h)}</div>}
                       </div>
                     </div>
                     {isSel && s.rotation !== 0 && <div style={{ position: "absolute", inset: 0, border: "2px dashed #3B82F6", borderRadius: 2, pointerEvents: "none", opacity: 0.4 }} />}
@@ -806,6 +906,9 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
 const zoomBtnStyle = { width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 4, cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#475569", fontFamily: "inherit" };
 const rotateBtnStyle = { padding: "5px 10px", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 5, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
 const saveBtnStyle = { padding: "5px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
+const primaryActionStyle = { flex: 1, padding: "7px 10px", background: "#3B82F6", border: "1px solid #3B82F6", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#fff", fontFamily: "inherit", whiteSpace: "nowrap" };
+const actionStyle = { flex: 1, padding: "7px 10px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
+const iconActionStyle = { padding: "7px 9px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 };
 const fileBtnStyle = { padding: "6px 14px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
 
 function SmallBtn({ onClick, label, color = "#475569" }) {
