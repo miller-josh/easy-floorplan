@@ -7,6 +7,16 @@ const PALETTE = [
   "#84CC16","#78716C",
 ];
 
+const INCH = 1 / 12;
+// Snap increments offered in the UI (stored as decimal feet)
+const SNAP_OPTIONS = [
+  { label: '1"', feet: 1 / 12 },
+  { label: '3"', feet: 0.25 },
+  { label: '6"', feet: 0.5 },
+  { label: '12"', feet: 1 },
+];
+const snapInches = (v) => Math.round(v * 12) / 12; // round to whole inch
+
 const snapTo = (v, step) => Math.round(v / step) * step;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 const degToRad = (d) => (d * Math.PI) / 180;
@@ -339,9 +349,9 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const handleNew = () => {
     setShapes([]); setGridW(19); setGridH(60);
     setTempGridW("19"); setTempGridH("60"); setIdCounter(1);
-    setPrecision(0.25);
+    setPrecision(INCH);
     setDesignName("Untitled Layout"); setCurrentDesignId(null);
-    setSelectedId(null); setHasUnsaved(false); setShowFiles(false); flash("New layout · 0.25 ft precision");
+    setSelectedId(null); setHasUnsaved(false); setShowFiles(false); flash('New layout · 1" snap');
   };
 
   const handleDuplicateDesign = async (id) => {
@@ -487,6 +497,28 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
       window.removeEventListener("mouseup", onUp);
     };
   }, [resizingSidebar]);
+
+  // Arrow-key nudge: move selected shape by one snap step (Shift = 1 ft)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!selectedId) return;
+      const tag = (e.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || e.target.isContentEditable) return;
+      const dirs = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      const d = dirs[e.key];
+      if (!d) return;
+      e.preventDefault();
+      const step = e.shiftKey ? 1 : precision;
+      const s = shapes.find(x => x.id === selectedId);
+      if (!s) return;
+      const { bw, bh } = getRotatedBounds(s.w, s.h, s.rotation);
+      const nx = clamp(snapInches(s.x + d[0] * step), 0, gridW - bw);
+      const ny = clamp(snapInches(s.y + d[1] * step), 0, gridH - bh);
+      updateShape(selectedId, { x: nx, y: ny });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, shapes, precision, gridW, gridH]);
 
   const handleGridClick = (e) => { if (e.target === e.currentTarget || e.target.dataset.grid) setSelectedId(null); };
   const zoomIn = () => setCellSize(s => Math.min(80, s + 4));
@@ -682,20 +714,21 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
           </div>
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Total: {gridW * gridH} sq ft ({gridW}′ × {gridH}′)</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>Grid precision</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>Snap</span>
             <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 6, padding: 2, border: "1px solid #e2e8f0" }}>
-              {[0.5, 0.25].map(p => (
-                <button key={p} onClick={() => setPrecision(p)}
-                  title={p === 0.25 ? "Quarter-foot snapping" : "Half-foot snapping"}
+              {SNAP_OPTIONS.map(opt => (
+                <button key={opt.label} onClick={() => setPrecision(opt.feet)}
+                  title={`Move and resize in ${opt.label} steps`}
                   style={{
-                    padding: "3px 10px", fontSize: 11, fontWeight: 600, fontFamily: "monospace",
+                    padding: "3px 9px", fontSize: 11, fontWeight: 600, fontFamily: "monospace",
                     border: "none", borderRadius: 4, cursor: "pointer",
-                    background: precision === p ? "#3B82F6" : "transparent",
-                    color: precision === p ? "#fff" : "#64748b",
-                  }}>{p}′</button>
+                    background: Math.abs(precision - opt.feet) < 1e-6 ? "#3B82F6" : "transparent",
+                    color: Math.abs(precision - opt.feet) < 1e-6 ? "#fff" : "#64748b",
+                  }}>{opt.label}</button>
               ))}
             </div>
           </div>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 5 }}>Tip: select a shape and use arrow keys to nudge (Shift = 1 ft)</div>
         </div>
 
         {/* Zoom */}
@@ -848,12 +881,8 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
             </svg>
             <div data-grid="true" onClick={handleGridClick} style={{
               position: "relative", width: cW, height: cH, marginLeft: RULER, marginTop: -cH - 1, background: "#fff",
-              backgroundImage: (precision < 0.5
-                ? `linear-gradient(to right,#fafafa 1px,transparent 1px),linear-gradient(to bottom,#fafafa 1px,transparent 1px),`
-                : ``) + `linear-gradient(to right,#f0f0f0 1px,transparent 1px),linear-gradient(to bottom,#f0f0f0 1px,transparent 1px),linear-gradient(to right,#dcdcdc 1px,transparent 1px),linear-gradient(to bottom,#dcdcdc 1px,transparent 1px)`,
-              backgroundSize: (precision < 0.5
-                ? `${cellSize*precision}px ${cellSize*precision}px,${cellSize*precision}px ${cellSize*precision}px,`
-                : ``) + `${cellSize}px ${cellSize}px,${cellSize}px ${cellSize}px,${cellSize*5}px ${cellSize*5}px,${cellSize*5}px ${cellSize*5}px`,
+              backgroundImage: `linear-gradient(to right,#f0f0f0 1px,transparent 1px),linear-gradient(to bottom,#f0f0f0 1px,transparent 1px),linear-gradient(to right,#dcdcdc 1px,transparent 1px),linear-gradient(to bottom,#dcdcdc 1px,transparent 1px)`,
+              backgroundSize: `${cellSize}px ${cellSize}px,${cellSize}px ${cellSize}px,${cellSize*5}px ${cellSize*5}px,${cellSize*5}px ${cellSize*5}px`,
               border: "1px solid #aaa", boxSizing: "content-box",
             }}>
               {shapes.map(s => {
