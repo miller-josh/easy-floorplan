@@ -135,12 +135,28 @@ function feetToFtIn(v) {
   let inch = totalInches - ft * 12;
   return { ft, inch };
 }
-function ftInToFeet(ft, inch) {
-  return (parseFloat(ft) || 0) + (parseFloat(inch) || 0) / 12;
-}
 function fmtFtIn(v) {
   const { ft, inch } = feetToFtIn(v);
   return inch === 0 ? `${ft}'` : `${ft}'${inch}"`;
+}
+// Parse flexible input into decimal feet. Accepts: 5'6", 5' 6, 5', 5, 5.5, 6", etc.
+// Returns null if it can't be parsed (caller reverts to previous value).
+function parseFtIn(str) {
+  if (str == null) return null;
+  let s = String(str).trim().replace(/[″”]/g, '"').replace(/[′’]/g, "'");
+  if (s === "") return null;
+  if (s.includes("'")) {
+    const idx = s.indexOf("'");
+    const ft = parseFloat(s.slice(0, idx));
+    const inch = parseFloat(s.slice(idx + 1).replace(/"/g, "").trim());
+    return (isNaN(ft) ? 0 : ft) + (isNaN(inch) ? 0 : inch) / 12;
+  }
+  if (s.includes('"')) {
+    const inch = parseFloat(s.replace(/"/g, "").trim());
+    return isNaN(inch) ? null : inch / 12;
+  }
+  const f = parseFloat(s);
+  return isNaN(f) ? null : f;
 }
 function fmtDate(ts) {
   const diff = Date.now() - ts;
@@ -503,35 +519,6 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
         onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
     </div>
   );
-
-  // Feet + inches input. Stores decimal feet; inch box steps by the active precision (3" or 6").
-  const FtInInput = ({ valueFeet, onChangeFeet, label, minFeet = 0 }) => {
-    const { ft, inch } = feetToFtIn(valueFeet);
-    const inchStep = Math.round(precision * 12); // 0.25ft -> 3", 0.5ft -> 6"
-    const boxStyle = { width: "100%", padding: "6px 4px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", background: "#f8fafc", outline: "none", textAlign: "center" };
-    const commit = (newFt, newIn) => {
-      let v = ftInToFeet(newFt, newIn);
-      v = Math.max(minFeet, v);
-      onChangeFeet(v);
-    };
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-        <span style={{ fontSize: 11, color: "#64748b", fontFamily: "inherit" }}>{label}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <input type="number" step="1" min={0} value={ft}
-            onChange={(e) => commit(e.target.value, inch)}
-            style={boxStyle}
-            onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
-          <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>′</span>
-          <input type="number" step={inchStep} min={0} value={inch}
-            onChange={(e) => commit(ft, e.target.value)}
-            style={boxStyle}
-            onFocus={(e) => e.target.style.borderColor = "#3B82F6"} onBlur={(e) => e.target.style.borderColor = "#d1d5db"} />
-          <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>″</span>
-        </div>
-      </div>
-    );
-  };
 
   // ── Files panel ──
   const FilesPanel = () => (
@@ -910,6 +897,31 @@ const primaryActionStyle = { flex: 1, padding: "7px 10px", background: "#3B82F6"
 const actionStyle = { flex: 1, padding: "7px 10px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
 const iconActionStyle = { padding: "7px 9px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 };
 const fileBtnStyle = { padding: "6px 14px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
+
+// Single-box feet+inches input. Type freely (5'6", 5' 6, 5.5, 6"); formats on blur.
+function FtInInput({ valueFeet, onChangeFeet, label, minFeet = 0 }) {
+  const [text, setText] = useState(() => fmtFtIn(valueFeet));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { if (!focused) setText(fmtFtIn(valueFeet)); }, [valueFeet, focused]);
+  const commit = () => {
+    const parsed = parseFtIn(text);
+    if (parsed == null) { setText(fmtFtIn(valueFeet)); return; }
+    const v = Math.max(minFeet, Math.round(parsed * 12) / 12); // snap to whole inch
+    onChangeFeet(v);
+    setText(fmtFtIn(v));
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+      <span style={{ fontSize: 11, color: "#64748b", fontFamily: "inherit" }}>{label}</span>
+      <input type="text" value={text} placeholder={`5'6"`}
+        onChange={(e) => setText(e.target.value)}
+        onFocus={(e) => { setFocused(true); e.target.select(); e.target.style.borderColor = "#3B82F6"; }}
+        onBlur={(e) => { setFocused(false); commit(); e.target.style.borderColor = "#d1d5db"; }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+        style={{ width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, fontFamily: "monospace", background: "#f8fafc", outline: "none" }} />
+    </div>
+  );
+}
 
 function SmallBtn({ onClick, label, color = "#475569" }) {
   return <button onClick={onClick} style={{ padding: "4px 10px", background: color === "#EF4444" ? "#FEF2F2" : "#f8fafc", color, border: `1px solid ${color}30`, borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>;
