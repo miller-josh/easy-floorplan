@@ -7,7 +7,7 @@ const PALETTE = [
   "#84CC16","#78716C",
 ];
 
-const snap = (v) => Math.round(v * 2) / 2;
+const snapTo = (v, step) => Math.round(v / step) * step;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 const degToRad = (d) => (d * Math.PI) / 180;
 const normAngle = (a) => ((a % 360) + 360) % 360;
@@ -105,9 +105,9 @@ async function sbDuplicate(id, userId, newName) {
 }
 
 // ── File export helpers ──
-const FILE_VERSION = 1;
-function buildExportData(designName, gridW, gridH, shapes, idCounter) {
-  return { _format: "easy-floorplan", _version: FILE_VERSION, exportedAt: new Date().toISOString(), designName, gridW, gridH, shapes, idCounter };
+const FILE_VERSION = 2;
+function buildExportData(designName, gridW, gridH, shapes, idCounter, precision) {
+  return { _format: "easy-floorplan", _version: FILE_VERSION, exportedAt: new Date().toISOString(), designName, gridW, gridH, shapes, idCounter, precision: precision || 0.5 };
 }
 function downloadJSON(data, filename) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -144,6 +144,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const [tempGridW, setTempGridW] = useState("19");
   const [tempGridH, setTempGridH] = useState("60");
   const [cellSize, setCellSize] = useState(32);
+  const [precision, setPrecision] = useState(0.5);
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [idCounter, setIdCounter] = useState(1);
@@ -176,6 +177,9 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
 
   const selected = shapes.find((s) => s.id === selectedId);
 
+  // Snap to the current floorplan's precision (0.5 ft default, 0.25 ft when enabled)
+  const snap = (v) => snapTo(v, precision);
+
   const flash = (msg) => {
     setStatusMsg(msg);
     if (statusTimer.current) clearTimeout(statusTimer.current);
@@ -197,13 +201,14 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     })();
   }, [useCloud, userId]);
 
-  useEffect(() => { if (storageReady) setHasUnsaved(true); }, [shapes, gridW, gridH]);
+  useEffect(() => { if (storageReady) setHasUnsaved(true); }, [shapes, gridW, gridH, precision]);
 
-  const getDesignState = () => ({ gridW, gridH, shapes, idCounter, designName });
+  const getDesignState = () => ({ gridW, gridH, shapes, idCounter, designName, precision });
 
   const applyDesign = (data) => {
     setGridW(data.gridW); setGridH(data.gridH);
     setTempGridW(String(data.gridW)); setTempGridH(String(data.gridH));
+    setPrecision(data.precision || 0.5);
     setShapes((data.shapes || []).map(s => ({ ...s, rotation: s.rotation || 0 })));
     setIdCounter(data.idCounter || (data.shapes?.length ? Math.max(...data.shapes.map(s => s.id)) + 1 : 1));
     setDesignName(data.designName || "Untitled Layout");
@@ -297,8 +302,9 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const handleNew = () => {
     setShapes([]); setGridW(19); setGridH(60);
     setTempGridW("19"); setTempGridH("60"); setIdCounter(1);
+    setPrecision(0.25);
     setDesignName("Untitled Layout"); setCurrentDesignId(null);
-    setSelectedId(null); setHasUnsaved(false); setShowFiles(false); flash("New layout");
+    setSelectedId(null); setHasUnsaved(false); setShowFiles(false); flash("New layout · 0.25 ft precision");
   };
 
   const handleDuplicateDesign = async (id) => {
@@ -318,7 +324,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
 
   // ── File export/import ──
   const handleExportFile = () => {
-    downloadJSON(buildExportData(designName, gridW, gridH, shapes, idCounter), sanitizeFilename(designName) + ".json");
+    downloadJSON(buildExportData(designName, gridW, gridH, shapes, idCounter, precision), sanitizeFilename(designName) + ".json");
     flash("Exported to file ✓");
   };
 
@@ -327,7 +333,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     if (useCloud) { data = await sbLoadData(id); }
     else { data = lsLoadData(id); }
     if (!data) { flash("Export failed"); return; }
-    downloadJSON(buildExportData(data.designName, data.gridW, data.gridH, data.shapes, data.idCounter), sanitizeFilename(data.designName) + ".json");
+    downloadJSON(buildExportData(data.designName, data.gridW, data.gridH, data.shapes, data.idCounter, data.precision), sanitizeFilename(data.designName) + ".json");
     flash("Exported ✓");
   };
 
@@ -349,7 +355,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   // ── Shape operations ──
   const applyGridSize = () => { const w = parseFloat(tempGridW), h = parseFloat(tempGridH); if (w > 0 && h > 0) { setGridW(w); setGridH(h); } };
   const addShape = () => {
-    const w = Math.max(0.5, parseFloat(newW) || 2), h = Math.max(0.5, parseFloat(newH) || 2);
+    const w = Math.max(precision, parseFloat(newW) || 2), h = Math.max(precision, parseFloat(newH) || 2);
     setShapes(prev => [...prev, { id: idCounter, x: 0.5, y: 0.5, w, h, label: newLabel || `Item ${idCounter}`, color: newColor, rotation: 0 }]);
     setSelectedId(idCounter); setIdCounter(c => c + 1); setNewLabel(""); setTab("edit");
   };
@@ -400,11 +406,11 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
         let ldx, ldy; const nr = normAngle(rot);
         if (nr === 0) { ldx = dx; ldy = dy; } else if (nr === 90) { ldx = dy; ldy = -dx; } else if (nr === 180) { ldx = -dx; ldy = -dy; } else { ldx = -dy; ldy = dx; }
         let nw = origW, nh = origH;
-        if (h.includes("e")) nw = snap(Math.max(0.5, origW + ldx));
-        if (h.includes("s")) nh = snap(Math.max(0.5, origH + ldy));
-        if (h.includes("w")) nw = snap(Math.max(0.5, origW - Math.max(-origW + 0.5, Math.min(snap(ldx), origW - 0.5))));
-        if (h.includes("n")) nh = snap(Math.max(0.5, origH - Math.max(-origH + 0.5, Math.min(snap(ldy), origH - 0.5))));
-        nw = snap(Math.max(0.5, nw)); nh = snap(Math.max(0.5, nh));
+        if (h.includes("e")) nw = snap(Math.max(precision, origW + ldx));
+        if (h.includes("s")) nh = snap(Math.max(precision, origH + ldy));
+        if (h.includes("w")) nw = snap(Math.max(precision, origW - Math.max(-origW + precision, Math.min(snap(ldx), origW - precision))));
+        if (h.includes("n")) nh = snap(Math.max(precision, origH - Math.max(-origH + precision, Math.min(snap(ldy), origH - precision))));
+        nw = snap(Math.max(precision, nw)); nh = snap(Math.max(precision, nh));
         const ob = getRotatedBounds(origW, origH, rot), nb = getRotatedBounds(nw, nh, rot);
         let fx = origX, fy = origY;
         if (h === "n") fy = origY + (ob.bh - nb.bh);
@@ -420,7 +426,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
       window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
       return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     }
-  }, [dragState, resizeState, shapes, gridW, gridH, cellSize, getGridPos]);
+  }, [dragState, resizeState, shapes, gridW, gridH, cellSize, getGridPos, precision]);
 
   const handleGridClick = (e) => { if (e.target === e.currentTarget || e.target.dataset.grid) setSelectedId(null); };
   const zoomIn = () => setCellSize(s => Math.min(80, s + 4));
@@ -601,6 +607,21 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
             <button onClick={applyGridSize} style={{ padding: "6px 12px", background: "#0f172a", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", height: 32, fontFamily: "inherit" }}>Set</button>
           </div>
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Total: {gridW * gridH} sq ft ({gridW}′ × {gridH}′)</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>Grid precision</span>
+            <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 6, padding: 2, border: "1px solid #e2e8f0" }}>
+              {[0.5, 0.25].map(p => (
+                <button key={p} onClick={() => setPrecision(p)}
+                  title={p === 0.25 ? "Quarter-foot snapping" : "Half-foot snapping"}
+                  style={{
+                    padding: "3px 10px", fontSize: 11, fontWeight: 600, fontFamily: "monospace",
+                    border: "none", borderRadius: 4, cursor: "pointer",
+                    background: precision === p ? "#3B82F6" : "transparent",
+                    color: precision === p ? "#fff" : "#64748b",
+                  }}>{p}′</button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Zoom */}
@@ -624,7 +645,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           {tab === "add" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", gap: 8 }}><DimInput label="Width (ft)" value={newW} onChange={setNewW} /><DimInput label="Height (ft)" value={newH} onChange={setNewH} /></div>
+              <div style={{ display: "flex", gap: 8 }}><DimInput label="Width (ft)" value={newW} onChange={setNewW} min={precision} step={String(precision)} /><DimInput label="Height (ft)" value={newH} onChange={setNewH} min={precision} step={String(precision)} /></div>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 11, color: "#64748b" }}>Label</span>
                 <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder={`Item ${idCounter}`}
@@ -654,12 +675,12 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
                   <input type="text" value={selected.label} onChange={e => updateShape(selected.id, { label: e.target.value })} style={{ padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#f8fafc", outline: "none", fontFamily: "inherit" }} />
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <DimInput label="Width (ft)" value={selected.w} onChange={v => { const val = Math.max(0.5, parseFloat(v) || 0.5); updateShape(selected.id, { w: val, x: clamp(selected.x, 0, gridW - getRotatedBounds(val, selected.h, selected.rotation).bw) }); }} />
-                  <DimInput label="Height (ft)" value={selected.h} onChange={v => { const val = Math.max(0.5, parseFloat(v) || 0.5); updateShape(selected.id, { h: val, y: clamp(selected.y, 0, gridH - getRotatedBounds(selected.w, val, selected.rotation).bh) }); }} />
+                  <DimInput label="Width (ft)" value={selected.w} min={precision} step={String(precision)} onChange={v => { const val = Math.max(precision, parseFloat(v) || precision); updateShape(selected.id, { w: val, x: clamp(selected.x, 0, gridW - getRotatedBounds(val, selected.h, selected.rotation).bw) }); }} />
+                  <DimInput label="Height (ft)" value={selected.h} min={precision} step={String(precision)} onChange={v => { const val = Math.max(precision, parseFloat(v) || precision); updateShape(selected.id, { h: val, y: clamp(selected.y, 0, gridH - getRotatedBounds(selected.w, val, selected.rotation).bh) }); }} />
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <DimInput label="X pos" value={selected.x} onChange={v => updateShape(selected.id, { x: clamp(parseFloat(v) || 0, 0, gridW - getRotatedBounds(selected.w, selected.h, selected.rotation).bw) })} min={0} />
-                  <DimInput label="Y pos" value={selected.y} onChange={v => updateShape(selected.id, { y: clamp(parseFloat(v) || 0, 0, gridH - getRotatedBounds(selected.w, selected.h, selected.rotation).bh) })} min={0} />
+                  <DimInput label="X pos" value={selected.x} min={0} step={String(precision)} onChange={v => updateShape(selected.id, { x: clamp(parseFloat(v) || 0, 0, gridW - getRotatedBounds(selected.w, selected.h, selected.rotation).bw) })} />
+                  <DimInput label="Y pos" value={selected.y} min={0} step={String(precision)} onChange={v => updateShape(selected.id, { y: clamp(parseFloat(v) || 0, 0, gridH - getRotatedBounds(selected.w, selected.h, selected.rotation).bh) })} />
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <span style={{ fontSize: 11, color: "#64748b" }}>Rotation</span>
@@ -740,8 +761,12 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
             </svg>
             <div data-grid="true" onClick={handleGridClick} style={{
               position: "relative", width: cW, height: cH, marginLeft: RULER, marginTop: -cH - 1, background: "#fff",
-              backgroundImage: `linear-gradient(to right,#f0f0f0 1px,transparent 1px),linear-gradient(to bottom,#f0f0f0 1px,transparent 1px),linear-gradient(to right,#dcdcdc 1px,transparent 1px),linear-gradient(to bottom,#dcdcdc 1px,transparent 1px)`,
-              backgroundSize: `${cellSize}px ${cellSize}px,${cellSize}px ${cellSize}px,${cellSize*5}px ${cellSize*5}px,${cellSize*5}px ${cellSize*5}px`,
+              backgroundImage: (precision < 0.5
+                ? `linear-gradient(to right,#fafafa 1px,transparent 1px),linear-gradient(to bottom,#fafafa 1px,transparent 1px),`
+                : ``) + `linear-gradient(to right,#f0f0f0 1px,transparent 1px),linear-gradient(to bottom,#f0f0f0 1px,transparent 1px),linear-gradient(to right,#dcdcdc 1px,transparent 1px),linear-gradient(to bottom,#dcdcdc 1px,transparent 1px)`,
+              backgroundSize: (precision < 0.5
+                ? `${cellSize*precision}px ${cellSize*precision}px,${cellSize*precision}px ${cellSize*precision}px,`
+                : ``) + `${cellSize}px ${cellSize}px,${cellSize}px ${cellSize}px,${cellSize*5}px ${cellSize*5}px,${cellSize*5}px ${cellSize*5}px`,
               border: "1px solid #aaa", boxSizing: "content-box",
             }}>
               {shapes.map(s => {

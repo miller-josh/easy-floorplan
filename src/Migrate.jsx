@@ -79,6 +79,7 @@ export default function Migrate({ session, onDone }) {
                     })),
                     idCounter: data.idCounter || 1,
                     designName: data.designName || file.name.replace(".json", ""),
+                    precision: data.precision || 0.5,
                   },
                   error: null,
                 });
