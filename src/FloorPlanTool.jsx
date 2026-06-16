@@ -17,6 +17,13 @@ const SNAP_OPTIONS = [
 ];
 const snapInches = (v) => Math.round(v * 12) / 12; // round to whole inch
 
+// Convert "#RRGGBB" + alpha to an rgba() string for canvas fills
+function hexWithAlpha(hex, alpha) {
+  const h = (hex || "#000000").replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 const snapTo = (v, step) => Math.round(v / step) * step;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 const degToRad = (d) => (d * Math.PI) / 180;
@@ -220,6 +227,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const [renameId, setRenameId] = useState(null);
   const [renameInput, setRenameInput] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const statusTimer = useRef(null);
 
   const selected = shapes.find((s) => s.id === selectedId);
@@ -397,6 +405,138 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
       } catch { flash("Import failed: invalid JSON"); }
     };
     reader.readAsText(file); e.target.value = "";
+  };
+
+  // ── Image / PDF export ──
+  // Render the whole floor plan to an offscreen canvas from the data model (crisp, independent of on-screen zoom).
+  const renderToCanvas = (dpi = 2) => {
+    const CELL = 26;            // px per foot in the export
+    const MARGIN = 24;
+    const RULER_PX = 30;
+    const TITLE_H = 64;
+    const plotW = gridW * CELL, plotH = gridH * CELL;
+    const W = MARGIN + RULER_PX + plotW + MARGIN;
+    const H = MARGIN + TITLE_H + RULER_PX + plotH + MARGIN;
+    const ox = MARGIN + RULER_PX;          // grid origin x
+    const oy = MARGIN + TITLE_H + RULER_PX; // grid origin y
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(W * dpi);
+    canvas.height = Math.round(H * dpi);
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpi, dpi);
+    ctx.textBaseline = "alphabetic";
+
+    // Background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, H);
+
+    // Title block
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "700 20px 'DM Sans', Arial, sans-serif";
+    ctx.fillText(designName || "Floor Plan", MARGIN, MARGIN + 22);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "400 12px 'DM Sans', Arial, sans-serif";
+    const snapLabel = (SNAP_OPTIONS.find(o => Math.abs(o.feet - precision) < 1e-6) || {}).label || `${precision}'`;
+    ctx.fillText(`${gridW}' × ${gridH}'  ·  ${gridW * gridH} sq ft  ·  snap ${snapLabel}  ·  ${new Date().toLocaleDateString()}`, MARGIN, MARGIN + 42);
+
+    // Plot white area + border
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(ox, oy, plotW, plotH);
+
+    // Grid lines (minor 1 ft, major 5 ft)
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= gridW; i++) {
+      const x = Math.round(ox + i * CELL) + 0.5;
+      ctx.strokeStyle = i % 5 === 0 ? "#dcdcdc" : "#f0f0f0";
+      ctx.beginPath(); ctx.moveTo(x, oy); ctx.lineTo(x, oy + plotH); ctx.stroke();
+    }
+    for (let i = 0; i <= gridH; i++) {
+      const y = Math.round(oy + i * CELL) + 0.5;
+      ctx.strokeStyle = i % 5 === 0 ? "#dcdcdc" : "#f0f0f0";
+      ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + plotW, y); ctx.stroke();
+    }
+    // Plot outer border
+    ctx.strokeStyle = "#aaaaaa";
+    ctx.strokeRect(ox + 0.5, oy + 0.5, plotW, plotH);
+
+    // Rulers (foot numbers every 5 ft)
+    ctx.fillStyle = "#64748b";
+    ctx.font = "400 11px monospace";
+    ctx.textAlign = "center";
+    for (let i = 0; i <= gridW; i += 5) ctx.fillText(`${i}'`, ox + i * CELL, oy - 8);
+    if (gridW % 5 !== 0) ctx.fillText(`${gridW}'`, ox + gridW * CELL, oy - 8);
+    ctx.textAlign = "right";
+    for (let i = 0; i <= gridH; i += 5) ctx.fillText(`${i}'`, ox - 8, oy + i * CELL + 4);
+    if (gridH % 5 !== 0) ctx.fillText(`${gridH}'`, ox - 8, oy + gridH * CELL + 4);
+    ctx.textAlign = "left";
+
+    // Shapes
+    for (const s of shapes) {
+      const { bw, bh } = getRotatedBounds(s.w, s.h, s.rotation);
+      const cx = ox + (s.x + bw / 2) * CELL;
+      const cy = oy + (s.y + bh / 2) * CELL;
+      const w = s.w * CELL, h = s.h * CELL;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((s.rotation || 0) * Math.PI / 180);
+      // fill (light tint) + border
+      ctx.fillStyle = hexWithAlpha(s.color, 0.19);
+      ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-w / 2, -h / 2, w, h);
+      // label + dimensions, clipped to the shape
+      ctx.beginPath(); ctx.rect(-w / 2, -h / 2, w, h); ctx.clip();
+      ctx.fillStyle = s.color;
+      ctx.textAlign = "center";
+      const fs = Math.max(8, Math.min(14, w / ((s.label || "").length * 0.6 + 1), h * 0.32));
+      ctx.font = `600 ${fs}px 'DM Sans', Arial, sans-serif`;
+      const showDim = h > 34;
+      ctx.fillText(s.label || "", 0, showDim ? -1 : fs / 3);
+      if (showDim) {
+        ctx.font = `400 ${Math.max(7, fs - 3)}px monospace`;
+        ctx.globalAlpha = 0.75;
+        ctx.fillText(`${fmtFtIn(s.w)}×${fmtFtIn(s.h)}`, 0, fs + 1);
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+    return { canvas, W, H };
+  };
+
+  const exportPNG = async () => {
+    setExporting(true);
+    try {
+      const { canvas } = renderToCanvas(2);
+      await new Promise((res) => canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = sanitizeFilename(designName) + ".png";
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+        res();
+      }, "image/png"));
+      flash("PNG downloaded ✓");
+    } catch (e) { console.error(e); flash("PNG export failed"); }
+    setExporting(false);
+  };
+
+  const exportPDF = async () => {
+    setExporting(true);
+    try {
+      const { canvas, W, H } = renderToCanvas(2);
+      const imgData = canvas.toDataURL("image/png");
+      const { jsPDF } = await import("jspdf");
+      const orientation = W >= H ? "landscape" : "portrait";
+      const pdf = new jsPDF({ orientation, unit: "pt", format: [W, H] });
+      pdf.addImage(imgData, "PNG", 0, 0, W, H);
+      pdf.save(sanitizeFilename(designName) + ".pdf");
+      flash("PDF downloaded ✓");
+    } catch (e) { console.error(e); flash("PDF export failed"); }
+    setExporting(false);
   };
 
   // ── Shape operations ──
@@ -867,6 +1007,10 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
           <span style={{ color: "#e2e8f0" }}>|</span>
           <span>1ft = {cellSize}px</span>
           {selected && <><span style={{ color: "#e2e8f0" }}>|</span><span style={{ color: "#3B82F6", fontWeight: 500 }}>{selected.label} ({fmtFtIn(selected.w)}×{fmtFtIn(selected.h)}{selected.rotation ? ` ${selected.rotation}°` : ""})</span></>}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <button onClick={exportPNG} disabled={exporting} style={exportImgBtnStyle} title="Download a PNG image of this drawing">🖼️ PNG</button>
+            <button onClick={exportPDF} disabled={exporting} style={exportImgBtnStyle} title="Download a PDF of this drawing">📄 PDF</button>
+          </div>
         </div>
 
         <div ref={gridRef} style={{ flex: 1, overflow: "auto", background: "#e8ecf1", cursor: dragState ? "grabbing" : "default" }} onClick={handleGridClick}>
@@ -926,6 +1070,7 @@ const primaryActionStyle = { flex: 1, padding: "7px 10px", background: "#3B82F6"
 const actionStyle = { flex: 1, padding: "7px 10px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
 const iconActionStyle = { padding: "7px 9px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 };
 const fileBtnStyle = { padding: "6px 14px", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
+const exportImgBtnStyle = { padding: "4px 10px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", color: "#475569", fontFamily: "inherit", whiteSpace: "nowrap" };
 
 // Single-box feet+inches input. Type freely (5'6", 5' 6, 5.5, 6"); formats on blur.
 function FtInInput({ valueFeet, onChangeFeet, label, minFeet = 0 }) {
