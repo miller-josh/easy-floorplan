@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { supabase } from "./supabaseClient";
+// Supabase client is passed in as a prop (bound to the Clerk session). See supabaseClient.js / main.jsx.
 
 const PALETTE = [
   "#3B82F6","#EF4444","#22C55E","#F59E0B","#A855F7",
@@ -43,8 +43,8 @@ function lsSaveData(id, d) { try { localStorage.setItem(LP + "data:" + id, JSON.
 function lsDeleteData(id) { try { localStorage.removeItem(LP + "data:" + id); } catch {} }
 
 // ── Supabase helpers ──
-async function sbLoadIndex(userId) {
-  const { data, error } = await supabase
+async function sbLoadIndex(client, userId) {
+  const { data, error } = await client
     .from("designs")
     .select("id, name, grid_w, grid_h, shape_count, created_at, updated_at")
     .eq("user_id", userId)
@@ -57,8 +57,8 @@ async function sbLoadIndex(userId) {
   }));
 }
 
-async function sbLoadData(id) {
-  const { data, error } = await supabase
+async function sbLoadData(client, id) {
+  const { data, error } = await client
     .from("designs")
     .select("data")
     .eq("id", id)
@@ -67,8 +67,8 @@ async function sbLoadData(id) {
   return data?.data || null;
 }
 
-async function sbSaveNew(userId, name, designData, gridW, gridH, shapeCount) {
-  const { data, error } = await supabase
+async function sbSaveNew(client, userId, name, designData, gridW, gridH, shapeCount) {
+  const { data, error } = await client
     .from("designs")
     .insert({
       user_id: userId,
@@ -84,8 +84,8 @@ async function sbSaveNew(userId, name, designData, gridW, gridH, shapeCount) {
   return data.id;
 }
 
-async function sbUpdate(id, name, designData, gridW, gridH, shapeCount) {
-  const { error } = await supabase
+async function sbUpdate(client, id, name, designData, gridW, gridH, shapeCount) {
+  const { error } = await client
     .from("designs")
     .update({
       name,
@@ -100,14 +100,14 @@ async function sbUpdate(id, name, designData, gridW, gridH, shapeCount) {
   return true;
 }
 
-async function sbDelete(id) {
-  const { error } = await supabase.from("designs").delete().eq("id", id);
+async function sbDelete(client, id) {
+  const { error } = await client.from("designs").delete().eq("id", id);
   if (error) { console.error("sbDelete:", error); return false; }
   return true;
 }
 
-async function sbRename(id, name) {
-  const { error } = await supabase
+async function sbRename(client, id, name) {
+  const { error } = await client
     .from("designs")
     .update({ name, updated_at: new Date().toISOString() })
     .eq("id", id);
@@ -115,10 +115,10 @@ async function sbRename(id, name) {
   return true;
 }
 
-async function sbDuplicate(id, userId, newName) {
-  const original = await sbLoadData(id);
+async function sbDuplicate(client, id, userId, newName) {
+  const original = await sbLoadData(client, id);
   if (!original) return null;
-  return sbSaveNew(userId, newName, original, original.gridW, original.gridH, (original.shapes || []).length);
+  return sbSaveNew(client, userId, newName, original, original.gridW, original.gridH, (original.shapes || []).length);
 }
 
 // ── File export helpers ──
@@ -183,10 +183,10 @@ function fmtDate(ts) {
   return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
-  const useCloud = !!session && !!supabase && !offlineMode;
-  const userId = session?.user?.id;
-  const userEmail = session?.user?.email;
+export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }) {
+  const useCloud = !!user && !!supabase && !offlineMode;
+  const userId = user?.id;
+  const userEmail = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress;
 
   const [gridW, setGridW] = useState(19);
   const [gridH, setGridH] = useState(60);
@@ -246,7 +246,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     (async () => {
       if (useCloud) {
         setSyncing(true);
-        const idx = await sbLoadIndex(userId);
+        const idx = await sbLoadIndex(supabase, userId);
         setDesigns(idx);
         setSyncing(false);
       } else {
@@ -254,7 +254,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
       }
       setStorageReady(true);
     })();
-  }, [useCloud, userId]);
+  }, [useCloud, userId, supabase]);
 
   useEffect(() => { if (storageReady) setHasUnsaved(true); }, [shapes, gridW, gridH, precision]);
 
@@ -272,7 +272,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
 
   const refreshIndex = async () => {
     if (useCloud) {
-      const idx = await sbLoadIndex(userId);
+      const idx = await sbLoadIndex(supabase, userId);
       setDesigns(idx);
     }
   };
@@ -285,7 +285,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     setSyncing(true);
     const state = getDesignState();
     if (useCloud) {
-      const ok = await sbUpdate(currentDesignId, designName, state, gridW, gridH, shapes.length);
+      const ok = await sbUpdate(supabase, currentDesignId, designName, state, gridW, gridH, shapes.length);
       if (ok) { await refreshIndex(); setHasUnsaved(false); flash("Saved to cloud ✓"); }
       else flash("Save failed");
     } else {
@@ -304,7 +304,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     const state = { ...getDesignState(), designName: n };
 
     if (useCloud) {
-      const newId = await sbSaveNew(userId, n, state, gridW, gridH, shapes.length);
+      const newId = await sbSaveNew(supabase, userId, n, state, gridW, gridH, shapes.length);
       if (newId) {
         await refreshIndex(); setCurrentDesignId(newId);
         setHasUnsaved(false); flash(`Saved "${n}" to cloud ✓`);
@@ -323,7 +323,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const handleLoad = async (id) => {
     setSyncing(true);
     let data;
-    if (useCloud) { data = await sbLoadData(id); }
+    if (useCloud) { data = await sbLoadData(supabase, id); }
     else { data = lsLoadData(id); }
     if (!data) { flash("Failed to load"); setSyncing(false); return; }
     applyDesign(data); setCurrentDesignId(id); setShowFiles(false);
@@ -334,7 +334,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   // ── Delete ──
   const handleDelete = async (id) => {
     setSyncing(true);
-    if (useCloud) { await sbDelete(id); await refreshIndex(); }
+    if (useCloud) { await sbDelete(supabase, id); await refreshIndex(); }
     else { lsDeleteData(id); const idx = designs.filter(d => d.id !== id); lsSaveIndex(idx); setDesigns(idx); }
     if (currentDesignId === id) { setCurrentDesignId(null); setDesignName("Untitled Layout"); }
     setConfirmDeleteId(null); flash("Deleted"); setSyncing(false);
@@ -344,7 +344,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
   const handleRename = async (id, newName) => {
     const n = newName.trim() || "Untitled Layout";
     setSyncing(true);
-    if (useCloud) { await sbRename(id, n); await refreshIndex(); }
+    if (useCloud) { await sbRename(supabase, id, n); await refreshIndex(); }
     else {
       const idx = designs.map(d => d.id === id ? { ...d, name: n, updatedAt: Date.now() } : d);
       lsSaveIndex(idx); setDesigns(idx);
@@ -367,7 +367,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
     const newName = (src?.name || "Layout") + " copy";
     setSyncing(true);
     if (useCloud) {
-      await sbDuplicate(id, userId, newName); await refreshIndex();
+      await sbDuplicate(supabase, id, userId, newName); await refreshIndex();
     } else {
       const data = lsLoadData(id); if (!data) { setSyncing(false); return; }
       const newId = genId(); data.designName = newName; lsSaveData(newId, data);
@@ -385,7 +385,7 @@ export default function FloorPlanTool({ session, offlineMode, onSignOut }) {
 
   const handleExportDesignFile = async (id) => {
     let data;
-    if (useCloud) { data = await sbLoadData(id); }
+    if (useCloud) { data = await sbLoadData(supabase, id); }
     else { data = lsLoadData(id); }
     if (!data) { flash("Export failed"); return; }
     downloadJSON(buildExportData(data.designName, data.gridW, data.gridH, data.shapes, data.idCounter, data.precision), sanitizeFilename(data.designName) + ".json");

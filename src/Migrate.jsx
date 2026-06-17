@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase, isSupabaseConfigured } from "./supabaseClient";
+import { isSupabaseConfigured } from "./supabaseClient";
 
 const LP = "fp_";
 
@@ -18,8 +18,7 @@ function validateImport(data) {
   return null;
 }
 
-export default function Migrate({ session, onDone }) {
-  const userId = session?.user?.id;
+export default function Migrate({ supabase, userId, onDone }) {
   const [localDesigns, setLocalDesigns] = useState([]);
   const [jsonFiles, setJsonFiles] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -79,7 +78,6 @@ export default function Migrate({ session, onDone }) {
                     })),
                     idCounter: data.idCounter || 1,
                     designName: data.designName || file.name.replace(".json", ""),
-                    precision: data.precision || 0.5,
                   },
                   error: null,
                 });
@@ -179,7 +177,7 @@ export default function Migrate({ session, onDone }) {
   const successCount = results.filter((r) => r.status === "ok").length;
   const errorCount = results.filter((r) => r.status === "error").length;
 
-  if (!isSupabaseConfigured() || !session) {
+  if (!isSupabaseConfigured() || !supabase || !userId) {
     return (
       <div style={pageStyle}>
         <div style={cardStyle}>

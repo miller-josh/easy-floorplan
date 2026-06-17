@@ -1,18 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
+import { useMemo } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { useSession } from "@clerk/clerk-react";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    'Supabase credentials not found. Cloud sync disabled.\n' +
-    'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.\n' +
-    'Falling back to localStorage only.'
-  );
+export const isSupabaseConfigured = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+// Returns a Supabase client whose requests carry the current Clerk session token.
+// Supabase validates that token via the native Clerk third-party auth integration,
+// so RLS policies can read the Clerk user id from auth.jwt()->>'sub'.
+// Must be called inside <ClerkProvider>. Returns null if Supabase isn't configured.
+export function useClerkSupabaseClient() {
+  const { session } = useSession();
+  return useMemo(() => {
+    if (!isSupabaseConfigured()) return null;
+    return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      accessToken: async () => (session ? await session.getToken() : null),
+    });
+  }, [session]);
 }
-
-export const supabase = (supabaseUrl && supabaseAnonKey)
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null;
-
-export const isSupabaseConfigured = () => !!supabase;
