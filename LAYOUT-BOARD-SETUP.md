@@ -8,7 +8,7 @@ How it fits together:
 browser (Clerk session) --Bearer token--> /api/board/* (Vercel function) --> Neon
 ```
 
-The browser never talks to the database. `api/board/[...path].js` verifies the Clerk token, checks the person's role (owner, editor, viewer) and runs the SQL. That replaces the row level security in the original handoff schema.
+The browser never talks to the database. `api/board.js` verifies the Clerk token, checks the person's role (owner, editor, viewer) and runs the SQL. That replaces the row level security in the original handoff schema.
 
 ## 1. Create the database (about 3 minutes)
 

@@ -6,7 +6,9 @@ export class ApiError extends Error {
 export function makeApi(getToken, base = "/api/board") {
   async function call(method, path, body) {
     const token = await getToken();
-    const res = await fetch(base + path, {
+    // One fixed endpoint, route in ?p= (see api/board.js)
+    const [route, qs] = path.replace(/^\//, "").split("?");
+    const res = await fetch(`${base}?p=${encodeURIComponent(route).replace(/%2F/g, "/")}${qs ? "&" + qs : ""}`, {
       method,
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),

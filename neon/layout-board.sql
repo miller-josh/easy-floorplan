@@ -5,7 +5,7 @@
 -- Differences from the handoff schema (layout-board-handoff/db/schema.sql):
 --   * Users are Clerk ids (text like "user_2abc..."), not uuids.
 --   * No auth.uid() and no row level security. Neon has no PostgREST layer;
---     every request goes through api/board/[...path].js, which verifies the
+--     every request goes through api/board.js, which verifies the
 --     Clerk token and enforces roles. The browser never talks to the DB.
 --   * Functions take the user id as a parameter.
 --   * Display names are stored so History can say "saved by Shannon".
