@@ -838,7 +838,10 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
               {useCloud ? `☁️ ${userEmail}` : "💾 Local storage"}
             </span>
             {useCloud && (
-              <button onClick={onSignOut} style={{ marginLeft: "auto", background: "none", border: "none", color: "#94a3b8", fontSize: 10, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", flexShrink: 0 }}>Sign out</button>
+              <a href="#board" style={{ marginLeft: "auto", color: "#2563EB", fontSize: 10, fontWeight: 600, textDecoration: "none", flexShrink: 0 }}>Layout Board →</a>
+            )}
+            {useCloud && (
+              <button onClick={onSignOut} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 10, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", flexShrink: 0 }}>Sign out</button>
             )}
           </div>
         </div>
