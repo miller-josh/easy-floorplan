@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "board:migrate": "node scripts/board-db.mjs migrate",
+    "board:seed": "node scripts/board-db.mjs seed",
+    "test": "node --test test/board-api.test.js"
   },
   "dependencies": {
+    "@clerk/backend": "^3.26.6",
     "@clerk/clerk-react": "^5.0.0",
+    "@neondatabase/serverless": "^1.2.0",
     "@supabase/supabase-js": "^2.49.0",
     "jspdf": "^2.5.2",
     "react": "^18.2.0",
@@ -19,6 +24,7 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
+    "pg": "^8.23.1",
     "vite": "^5.0.0"
   }
 }
