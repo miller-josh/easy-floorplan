@@ -1,4 +1,4 @@
-// Layout Board API logic. Framework free so it can run on Vercel (api/board/[...path].js)
+// Layout Board API logic. Framework free so it can run on Vercel (api/board.js)
 // and in tests against a local Postgres.
 //
 // ctx = {

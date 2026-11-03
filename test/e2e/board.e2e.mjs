@@ -91,14 +91,14 @@ try {
   await shannon.waitForFunction(() => /Saved for everyone.*by Shannon/.test(document.querySelector(".savestate").textContent));
   check("keep mine then save works", true);
   // Josh's proofer move (item 8) must still be in the final layout (nothing lost)
-  const rev = await (await fetch(`http://localhost:4010/api/board/plans/${api.planId}/layout`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
+  const rev = await (await fetch(`http://localhost:4010/api/board?p=plans/${api.planId}/layout`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
   check("final layout has oven, proofer and mixer moves", rev.state.t[7] && rev.state.t[8]?.dy > 0 && rev.state.t[9]?.dx > 0, `rev ${rev.rev}`);
 
   /* 5. true race on the save request: second POST gets 409 -> choice */
   await josh.waitForFunction(() => /Shannon/.test(document.querySelector(".savestate").textContent), null, { timeout: 15000 });
   await pick(josh, 10); await josh.keyboard.press("ArrowUp");
   await pick(shannon, 11); await shannon.keyboard.press("ArrowUp");
-  await shannon.route("**/api/board/plans/*/layout?since=*", (r) => r.abort()); // her poll can't see Josh first
+  await shannon.route("**/api/board?p=plans/*/layout&since=*", (r) => r.abort()); // her poll can't see Josh first
   await saveBtn(josh).click();
   await josh.waitForFunction(() => !/Unsaved/.test(document.querySelector(".savestate").textContent));
   await saveBtn(shannon).click();
@@ -106,13 +106,13 @@ try {
   check("stale save (409) produces the same choice", /Josh saved a new layout/.test(await shannon.locator(".notice[role=alert]").innerText()));
   await shannon.getByRole("button", { name: "Use theirs" }).click();
   check("use theirs drops her draft", !/Unsaved/.test(await shannon.locator(".savestate").innerText()));
-  await shannon.unroute("**/api/board/plans/*/layout?since=*");
+  await shannon.unroute("**/api/board?p=plans/*/layout&since=*");
 
   /* 6. viewer can rearrange but not save */
   await pick(al, 13); await al.keyboard.press("ArrowLeft");
   check("viewer can try ideas locally", /Moved/.test(await al.locator(".kv").innerText()) && /right|left/.test(await al.locator(".kv").innerText()));
   check("viewer still cannot save", await saveBtn(al).isDisabled());
-  const forced = await (await fetch(`http://localhost:4010/api/board/plans/${api.planId}/layout`, { method: "POST", headers: { Authorization: "Bearer tok:user_al", "Content-Type": "application/json" }, body: JSON.stringify({ expectedRev: 1, state: { t: {}, dups: [] } }) })).status;
+  const forced = await (await fetch(`http://localhost:4010/api/board?p=plans/${api.planId}/layout`, { method: "POST", headers: { Authorization: "Bearer tok:user_al", "Content-Type": "application/json" }, body: JSON.stringify({ expectedRev: 1, state: { t: {}, dups: [] } }) })).status;
   check("server rejects a viewer's save (403)", forced === 403);
 
   /* 7. history + restore */
@@ -126,9 +126,9 @@ try {
   check("preview banner shown", /Previewing rev 2/.test(await josh.locator(".notice.preview").innerText()));
   await josh.getByRole("button", { name: "Restore" }).click();
   await josh.waitForFunction(() => /Saved for everyone/.test(document.querySelector(".savestate").textContent) && !document.querySelector(".notice.preview"));
-  const afterRestore = await (await fetch(`http://localhost:4010/api/board/plans/${api.planId}/revisions`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
+  const afterRestore = await (await fetch(`http://localhost:4010/api/board?p=plans/${api.planId}/revisions`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
   check("restore saved a new revision", /Restored from rev 2/.test(afterRestore.revisions[0].note || ""), `top rev ${afterRestore.revisions[0].rev}`);
-  const restored = await (await fetch(`http://localhost:4010/api/board/plans/${api.planId}/layout`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
+  const restored = await (await fetch(`http://localhost:4010/api/board?p=plans/${api.planId}/layout`, { headers: { Authorization: "Bearer tok:user_josh" } })).json();
   check("restored layout equals rev 2 (only the oven moved)", Object.keys(restored.state.t).join() === "7");
 
   /* 8. DXF export */

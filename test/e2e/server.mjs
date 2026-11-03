@@ -29,8 +29,8 @@ export async function startApi(port = 4010) {
     let body = ""; for await (const c of req) body += c;
     const url = new URL(req.url, "http://x");
     const auth = req.headers.authorization || "";
-    const out = await router({ method: req.method, path: url.pathname.replace(/^\/api\/board\/?/, "").split("/").filter(Boolean),
-      body: body ? JSON.parse(body) : undefined, token: auth.startsWith("Bearer ") ? auth.slice(7) : null, search: Object.fromEntries(url.searchParams) });
+    const search = Object.fromEntries(url.searchParams); const path = String(search.p || "").split("/").filter(Boolean); delete search.p;
+    const out = await router({ method: req.method, path, body: body ? JSON.parse(body) : undefined, token: auth.startsWith("Bearer ") ? auth.slice(7) : null, search });
     res.writeHead(out.status, { "Content-Type": "application/json" }); res.end(JSON.stringify(out.json));
   });
   await new Promise((r) => server.listen(port, r));
