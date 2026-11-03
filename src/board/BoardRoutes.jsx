@@ -22,8 +22,8 @@ function Message({ children }) {
   return <div className="lb"><div className="center">{children}</div></div>;
 }
 
-export default function BoardRoutes({ route, getToken, offlineMode }) {
-  const api = useMemo(() => makeApi(getToken), [getToken]);
+export default function BoardRoutes({ route, getToken, offlineMode, apiBase }) {
+  const api = useMemo(() => makeApi(getToken, apiBase), [getToken, apiBase]);
   if (offlineMode) return <Message><strong>Sign in to use the Layout Board.</strong><button onClick={() => go("")}>Back</button></Message>;
   if (route.kind === "invite") return <Invite api={api} token={route.token} />;
   if (route.planId) return <LayoutBoard api={api} planId={route.planId} onBack={() => go("")} />;

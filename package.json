@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "board:migrate": "node scripts/board-db.mjs migrate",
     "board:seed": "node scripts/board-db.mjs seed",
-    "test": "node --test test/board-api.test.js"
+    "test": "node --test test/board-api.test.js test/merge.test.js",
+    "test:e2e": "node test/e2e/board.e2e.mjs"
   },
   "dependencies": {
     "@clerk/backend": "^3.26.6",

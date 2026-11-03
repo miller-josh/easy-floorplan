@@ -77,11 +77,17 @@ function Editor({ api, planId, onBack, sync, toast }) {
   }, []);
   useEffect(() => {
     const el = svgRef.current;
-    const ro = new ResizeObserver(() => {
+    const onResize = () => {
+      const G = g.current;
+      // A refit in the middle of a drag would shift the pointer's model coordinates; apply it when the gesture ends.
+      if (G.drag || G.rsz || G.pan || G.pinch) { G.pendingResize = true; return; }
+      G.pendingResize = false;
       const r = el.getBoundingClientRect(); if (!r.width || !r.height) return;
       setSize({ w: r.width, h: r.height });
       if (!userZoomed.current) fit(); else setView((v) => ({ ...v, h: v.w / (r.width / r.height) }));
-    });
+    };
+    g.current.onResize = onResize;
+    const ro = new ResizeObserver(onResize);
     ro.observe(el);
     const wheel = (e) => { e.preventDefault(); zoomAt(Math.exp(e.deltaY * 0.0015), e.clientX, e.clientY); };
     el.addEventListener("wheel", wheel, { passive: false });
@@ -172,6 +178,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
     if (G.rsz) { if (G.rsz.moved) sync.gestureEnd(G.rsz.before); G.rsz = null; return; }
     if (G.drag) { if (G.drag.moved) sync.gestureEnd(G.drag.before); G.drag = null; setDragId(null); }
     else if (G.pan) { if (!G.pan.moved) setSelected(new Set()); G.pan = null; }
+    if (G.pendingResize && !G.drag && !G.rsz && !G.pan && !G.pinch) G.onResize();
   };
 
   /* ----- actions ----- */
@@ -292,19 +299,19 @@ function Editor({ api, planId, onBack, sync, toast }) {
           {[["zones", "Zones"], ["tags", "Tags"], ["dims", "Gaps"]].map(([k, l]) => (
             <label key={k} className="chk"><input type="checkbox" checked={show[k]} onChange={(e) => setShow({ ...show, [k]: e.target.checked })} /> {l}</label>
           ))}
-          <span className={"savestate " + stateCls} aria-live="polite">{stateText}</span>
           <button className="primary" disabled={readOnly || saving || !dirty || !!conflict || locked} onClick={() => sync.save()}>{readOnly ? "View only" : "Save for everyone"}</button>
           <button onClick={() => setPanel("history")}>History</button>
           {role === "owner" && <button onClick={() => setPanel("share")}>Share</button>}
           <button onClick={exportDxf}>Export DXF</button>
           <button onClick={copyMoves} title="Copies a short list of your moves to paste into chat">Copy moves for Claude</button>
+          <span className={"savestate " + stateCls} aria-live="polite">{stateText}</span>
         </div>
       </header>
 
       {conflict ? (
         <div className="notice" role="alert">
           <span>{conflict.late ? "Someone saved a new layout after your last changes. You’re seeing theirs now." : `${conflict.theirs.updated_by_name || "Someone"} saved a new layout.`}</span>
-          <button onClick={sync.keepMine}>Keep mine</button><button onClick={sync.useTheirs}>Use theirs</button>
+          <button onClick={sync.keepMine} title="Puts your changes on top of their layout">Keep mine</button><button onClick={sync.useTheirs} title="Drops your unsaved changes">Use theirs</button>
         </div>
       ) : preview ? (
         <div className="notice preview">

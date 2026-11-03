@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalize } from "./lib/transform";
 import { EMPTY_STATE } from "./model";
+import { mergeStates } from "./merge";
 
 const POLL_MS = 4000;
 const same = (a, b) => JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
@@ -68,7 +69,7 @@ export function useBoardSync(api, planId, toast) {
       if (same(stateRef.current, base.state)) {
         setShared(l); setState(l.state); undoRef.current = []; redoRef.current = []; bump((n) => n + 1);
         toast?.(`${l.updated_by_name || "Someone"} saved a new layout`);
-      } else setConf({ theirs: l, mine: stateRef.current });
+      } else setConf({ theirs: l, mine: stateRef.current, base: base.state });
     } catch { /* offline or sleeping DB: try again next tick */ }
   }, [api, planId, toast]);
 
@@ -101,7 +102,7 @@ export function useBoardSync(api, planId, toast) {
       toast?.("Saved. Everyone with access now sees this layout.");
       return true;
     } catch (e) {
-      if (e.status === 409 && e.body.layout) setConf({ theirs: e.body.layout, mine: stateToSave || stateRef.current });
+      if (e.status === 409 && e.body.layout) setConf({ theirs: e.body.layout, mine: stateToSave || stateRef.current, base: sharedRef.current.state });
       else if (e.status === 403) { setRole("viewer"); toast?.("You no longer have edit access. Your changes stay on this device."); }
       else toast?.("Couldn’t save for everyone. Your changes are still here; try again.");
       return false;
@@ -110,10 +111,12 @@ export function useBoardSync(api, planId, toast) {
 
   const keepMine = useCallback(() => {
     const c = conflictRef.current; if (!c) return;
+    // Put my changes on top of theirs when I know what I started from; otherwise keep my draft as is.
+    const next = c.base ? mergeStates(c.base, c.mine, c.theirs.state) : c.mine;
     setShared(c.theirs); setConf(null);
-    if (c.late) { pushUndo(stateRef.current); }
-    setState(c.mine);
-    toast?.("Your version is back. Save for everyone to replace the shared one.");
+    pushUndo(stateRef.current);
+    setState(next);
+    toast?.(c.base ? "Your changes are on top of their layout. Save for everyone to publish." : "Your version is back. Save for everyone to replace the shared one.");
   }, [toast]);
   const useTheirs = useCallback(() => {
     const c = conflictRef.current; if (!c) return;
