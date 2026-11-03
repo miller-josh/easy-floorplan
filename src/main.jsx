@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
-import { ClerkProvider, useUser, useClerk } from "@clerk/clerk-react";
+import { ClerkProvider, useUser, useClerk, useAuth } from "@clerk/clerk-react";
 import FloorPlanTool from "./FloorPlanTool";
 import Auth from "./Auth";
 import Migrate from "./Migrate";
+import BoardRoutes, { parseBoardHash, rememberInvite, pendingInvite } from "./board/BoardRoutes";
 import { useClerkSupabaseClient, isSupabaseConfigured } from "./supabaseClient";
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-// Tracks the #migrate hash route
+// Tracks the hash route: #migrate, #board[/<planId>], #invite/<token>
+const pageFromHash = () => {
+  const h = typeof window !== "undefined" ? window.location.hash : "";
+  if (h === "#migrate") return "migrate";
+  return parseBoardHash(h) ? "board" : "app";
+};
+if (typeof window !== "undefined") rememberInvite(window.location.hash);
 function useHashPage() {
-  const [page, setPage] = useState(
-    typeof window !== "undefined" && window.location.hash === "#migrate" ? "migrate" : "app"
-  );
+  const [page, setPage] = useState(pageFromHash);
   useEffect(() => {
-    const onHash = () => setPage(window.location.hash === "#migrate" ? "migrate" : "app");
+    const onHash = () => setPage(pageFromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -34,8 +39,13 @@ function Loading() {
 }
 
 // Renders the actual tool / migrate page given resolved auth + client
-function Shell({ supabase, user, offlineMode, onSignOut }) {
+function Shell({ supabase, user, offlineMode, onSignOut, getToken }) {
   const [page, setPage] = useHashPage();
+  if (page === "board" || (!offlineMode && user && pendingInvite() && page === "app")) {
+    // A pending invite survives the sign-in screen even if it dropped the hash.
+    const route = parseBoardHash(window.location.hash) || { kind: "invite", token: pendingInvite() };
+    return <BoardRoutes route={route} getToken={getToken} offlineMode={offlineMode} />;
+  }
   if (page === "migrate") {
     return (
       <Migrate
@@ -54,6 +64,7 @@ function ClerkApp() {
   const { isLoaded, isSignedIn, user } = useUser();
   const supabase = useClerkSupabaseClient();
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
   const [offline, setOffline] = useState(false);
 
   if (!isLoaded) return <Loading />;
@@ -66,6 +77,7 @@ function ClerkApp() {
       user={useOffline ? null : user}
       offlineMode={useOffline}
       onSignOut={() => signOut()}
+      getToken={getToken}
     />
   );
 }
