@@ -110,3 +110,11 @@ test("restore = save an old revision's state as a new revision", async () => {
   const h = await call(db.router, USERS.josh, "GET", P() + "/revisions");
   assert.equal(h.json.revisions[0].note, "Restored from rev 2");
 });
+
+test("whoami reports what the deployment sees", async () => {
+  const r = await call(db.router, USERS.josh, "GET", "whoami");
+  assert.equal(r.status, 200);
+  assert.equal(r.json.seenUserId, USERS.josh);
+  assert.ok(r.json.plans >= 1);
+  assert.equal((await call(db.router, null, "GET", "whoami")).status, 401);
+});

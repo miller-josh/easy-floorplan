@@ -51,6 +51,13 @@ export function createBoardRouter(ctx) {
       if (!userId) throw new HttpError(401, "unauthorized");
       const seg = path.filter(Boolean);
 
+      // TEMPORARY setup check: GET /whoami. Shows what this deployment sees (no secrets).
+      if (seg[0] === "whoami" && method === "GET") {
+        const [db] = await query("select current_database() as database, current_setting('neon.endpoint_id', true) as endpoint, (select count(*)::int from lb_floor_plans) as plans, (select count(*)::int from lb_plan_members) as members");
+        const mem = await query("select left(user_id, 14) as id_prefix, length(user_id) as id_length, role from lb_plan_members");
+        return { status: 200, json: { seenUserId: userId, seenUserIdLength: userId.length, ...db, memberRows: mem } };
+      }
+
       // GET /plans
       if (seg[0] === "plans" && seg.length === 1 && method === "GET") {
         const rows = await query(
