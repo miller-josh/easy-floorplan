@@ -12,13 +12,16 @@ export default function Auth({ onSkip }) {
       <div style={{ textAlign: "center", marginBottom: 4 }}>
         <div style={{ fontSize: 34, marginBottom: 6 }}>🍕</div>
         <div style={{ fontSize: 20, fontWeight: 700, color: "#0f172a" }}>Floor Plan Tool</div>
-        <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 4 }}>Sign in to sync your designs across devices</div>
+        <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 4 }}>Enter your name and password. You'll stay signed in on this device.</div>
       </div>
 
       <SignIn
         appearance={{
           elements: {
             rootBox: { width: "100%" },
+            // Keep the form minimal: username + password only
+            socialButtonsRoot: { display: "none" },
+            dividerRow: { display: "none" },
             card: { boxShadow: "0 4px 24px rgba(0,0,0,0.08)", border: "1px solid #e2e8f0" },
           },
           variables: { colorPrimary: "#3B82F6", fontFamily: "'DM Sans', sans-serif" },
