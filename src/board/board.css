@@ -46,6 +46,19 @@
 .lb .list input{width:100%;box-sizing:border-box;font:13px var(--font-ui);padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);margin-bottom:6px}
 .lb .list ul{list-style:none;margin:0;padding:0}
 .lb .list li button{width:100%;text-align:left;border:0;background:transparent;border-radius:5px;display:flex;gap:8px;align-items:center;min-height:30px;padding:4px 8px}
+.lb .list li.lrow{display:flex;align-items:center;gap:6px;border-radius:5px;padding:1px 4px}
+.lb .list li.lrow[aria-current="true"]{background:var(--accent-soft)}
+.lb .list li.lrow:hover{background:var(--bg)}
+.lb .list li.lrow[aria-current="true"]:hover{background:var(--accent-soft)}
+.lb .list li.lrow .lsel{width:26px;flex:none;justify-content:center;padding:0;min-height:26px;color:var(--muted)}
+.lb .ltag{width:34px;flex:none;text-align:center;font:600 12px var(--font-mono);text-transform:uppercase;padding:4px 2px}
+.lb .list li.lrow .ltag{width:34px;margin:0;padding:4px 2px}
+.lb .lname{min-width:0;flex:1;font:13px var(--font-ui)}
+.lb .list li.lrow .lname{width:auto;margin:0;padding:4px 6px;border-color:transparent;background:transparent}
+.lb .list li.lrow .lname:hover{border-color:var(--line)}
+.lb .list li.lrow .lname:focus{background:var(--bg);border-color:var(--accent)}
+.lb .list li.lrow .copy{font:10px var(--font-mono);color:var(--muted)}
+.lb .idf{align-items:flex-end;gap:8px;margin-bottom:6px}
 .lb .list li button:hover{background:var(--bg)}
 .lb .list li button[aria-current="true"]{background:var(--accent-soft)}
 .lb .list .t{font:600 11px var(--font-mono);width:18px;color:var(--muted)}

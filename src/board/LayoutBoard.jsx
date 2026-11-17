@@ -63,7 +63,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
 
   const cur = preview ? preview.state : state;
   const locked = !!preview;
-  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups, cur.walls, cur.geo, cur.txt]);
+  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups, cur.walls, cur.geo, cur.txt, cur.names, cur.tags]);
   const L = useRef({}); L.current = { cur, selected, snap, view, locked, index, sync, drawMode, thick };
 
   /* ----- view ----- */
@@ -374,6 +374,15 @@ function Editor({ api, planId, onBack, sync, toast }) {
     await sync.save(p.state, `Restored from rev ${p.rev}`);
   };
 
+  /** Rename an item or change its plan letter. Blank name goes back to the original; blank letter hides the tag. */
+  const setMeta = (field, id, v, was) => {
+    if (v === was) return;
+    sync.edit((s) => {
+      const m = { ...(s[field] || {}) };
+      if (field === "names" && !v) delete m[id]; else m[id] = v;
+      const n = { ...s, [field]: m }; if (!Object.keys(m).length) delete n[field]; return n;
+    });
+  };
   const single = selIds.length === 1 ? getItem(index, cur, selIds[0]) : null;
   const st1 = single ? tOf(cur, single.id) : null;
 
@@ -488,6 +497,15 @@ function Editor({ api, planId, onBack, sync, toast }) {
                 {single?.tag && <span className="badge">{single.tag}</span>}
                 {single ? dname(single, st1) + (single.dupOf ? " (copy)" : "") : `${selIds.length} items selected`}
               </h2>
+              {single && (
+                <div className="row idf">
+                  <label className="szf"><span>Letter</span>
+                    <input key={"il" + single.id + (single.tag || "")} className="ltag" maxLength={3} disabled={locked} aria-label="Letter" defaultValue={single.tag || ""}
+                      onBlur={(e) => setMeta("tags", single.id, e.target.value.trim().toUpperCase(), single.tag || "")} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
+                  <label className="szf" style={{ flex: 1 }}><span>Name</span>
+                    <input key={"in" + single.id + dname(single, st1)} className="lname" style={{ width: "100%" }} maxLength={120} disabled={locked} aria-label="Name" defaultValue={dname(single, st1)}
+                      onBlur={(e) => setMeta("names", single.id, e.target.value.trim(), dname(single, st1))} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>
+                </div>)}
               {single && (() => {
                 const [w, d] = sizeOf(single, st1); const mv = [];
                 if (Math.abs(st1.dx) >= 0.25) mv.push(`${fmt(Math.abs(st1.dx))} ${st1.dx > 0 ? "right" : "left"}`);
@@ -527,10 +545,21 @@ function Editor({ api, planId, onBack, sync, toast }) {
               {listItems.map((it) => {
                 const t = tOf(cur, it.id); const moved = t.dx || t.dy || t.rot || t.sx !== 1 || t.sy !== 1 || it.dupOf;
                 return (
-                  <li key={it.id}><button aria-current={selected.has(it.id) ? "true" : "false"} onClick={(e) => setSelected(e.shiftKey ? (() => { const n = new Set(selected); n.has(it.id) ? n.delete(it.id) : n.add(it.id); return n; })() : new Set([it.id]))}>
-                    <span className="t">{it.tag || "·"}</span><span>{dname(it, t) + (it.dupOf ? " (copy)" : "")}</span>
+                  <li key={it.id} className="lrow" aria-current={selected.has(it.id) ? "true" : "false"}>
+                    <input className="ltag" aria-label={`Letter for ${dname(it, t)}`} title="Letter shown on the plan" placeholder="·" maxLength={3} disabled={locked}
+                      key={"g" + it.id + (it.tag || "")} defaultValue={it.tag || ""}
+                      onFocus={() => setSelected(new Set([it.id]))}
+                      onBlur={(e) => setMeta("tags", it.id, e.target.value.trim().toUpperCase(), it.tag || "")}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.currentTarget.value = it.tag || ""; e.currentTarget.blur(); } }} />
+                    <input className="lname" aria-label={`Name of ${dname(it, t)}`} title="Click to rename" maxLength={120} disabled={locked}
+                      key={"n" + it.id + dname(it, t)} defaultValue={dname(it, t)}
+                      onFocus={() => setSelected(new Set([it.id]))}
+                      onBlur={(e) => setMeta("names", it.id, e.target.value.trim(), dname(it, t))}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.currentTarget.value = dname(it, t); e.currentTarget.blur(); } }} />
+                    {it.dupOf && <span className="copy">copy</span>}
                     {moved && <span className="moved">{it.dupOf ? "added" : "moved"}</span>}
-                  </button></li>
+                    <button className="lsel" aria-label={`Select ${dname(it, t)}`} title="Select (Shift adds to selection)" onClick={(e) => setSelected(e.shiftKey ? (() => { const n = new Set(selected); n.has(it.id) ? n.delete(it.id) : n.add(it.id); return n; })() : new Set([it.id]))}>◎</button>
+                  </li>
                 );
               })}
               {removed.length > 0 && !locked && <li><button onClick={() => sync.edit((s) => removed.reduce((n, i) => setT(n, i.id, { hidden: false }), s))}>Bring back {removed.length} removed item{removed.length > 1 ? "s" : ""}</button></li>}

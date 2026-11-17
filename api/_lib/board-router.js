@@ -38,6 +38,11 @@ function validState(s) {
     if (!s.txt || typeof s.txt !== "object" || Array.isArray(s.txt)) return false;
     for (const k in s.txt) if (typeof s.txt[k] !== "string" || s.txt[k].length > 500) return false;
   }
+  for (const [f, max] of [["names", 120], ["tags", 4]]) {
+    if (s[f] === undefined) continue;
+    if (!s[f] || typeof s[f] !== "object" || Array.isArray(s[f])) return false;
+    for (const k in s[f]) if (typeof s[f][k] !== "string" || s[f][k].length > max) return false;
+  }
   return true;
 }
 
