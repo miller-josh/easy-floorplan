@@ -36,9 +36,13 @@ export interface PlanBase {
 export interface ItemTransform { dx: number; dy: number; rot: number; hidden: boolean; sx: number; sy: number }
 
 /** A duplicate of an existing item ("Duplicate" button). id is a string so it never collides with base ids. */
-export interface DupRef { id: string; src: number }
+export interface DupRef { id: string; src: number | string }
 
-export interface LayoutState { t: Record<string, ItemTransform>; dups: DupRef[] }
+/** A wall drawn by the user: four corners [x0,y0,...] in plan inches. */
+export interface UserWall { id: string; pts: number[] }
+
+/** walls = walls added by the user. geo = reshaped points for fixed lines, keyed by item id ("s12"). */
+export interface LayoutState { t: Record<string, ItemTransform>; dups: DupRef[]; walls?: UserWall[]; geo?: Record<string, number[]>; txt?: Record<string, string> }
 
 /** What gets stored as the shared layout. rev increments on every save (optimistic concurrency). */
 export interface SharedLayout { rev: number; savedAt: string | null; state: LayoutState }

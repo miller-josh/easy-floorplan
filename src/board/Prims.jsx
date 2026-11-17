@@ -44,10 +44,12 @@ export const ItemView = memo(function ItemView({ it, t, showTags, dragging, onDo
   const b = it.box;
   const tagOff = it.tagC ? [(it.tagC[0] - it.cx) * (t.sx - 1), (it.tagC[1] - it.cy) * (t.sy - 1)] : [0, 0];
   return (
-    <g className={"it" + (it.overhead ? " overhead" : "") + (dragging ? " dragging" : "")} data-id={it.id} onPointerDown={onDown}
+    <g className={"it" + (it.static ? " static" : "") + (it.overhead ? " overhead" : "") + (dragging ? " dragging" : "")} data-id={it.id} onPointerDown={onDown}
       transform={`translate(${t.dx} ${t.dy}) rotate(${t.rot} ${it.cx} ${it.cy})`} style={t.hidden ? { display: "none" } : undefined}>
       <g className="geo" transform={`translate(${it.cx} ${it.cy}) scale(${t.sx} ${t.sy}) translate(${-it.cx} ${-it.cy})`}>
-        <rect className="hit" x={b[0] - 1} y={b[1] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} />
+        {it.static
+          ? it.prims.map((p, i) => p.t === "p" ? <path key={"h" + i} className="shit" d={pathD(p.pts, p.c)} /> : null)
+          : <rect className="hit" x={b[0] - 1} y={b[1] - 1} width={b[2] - b[0] + 2} height={b[3] - b[1] + 2} />}
         {it.prims.map((p, i) => p.L !== "TAGS" && p.t !== "x" ? <GeoPrim key={i} p={p} /> : null)}
       </g>
       {it.prims.map((p, i) => p.L !== "TAGS" && p.t === "x" ? <TextPrim key={i} p={p} it={it} t={t} /> : null)}

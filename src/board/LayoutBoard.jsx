@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./board.css";
 import { buildDXF } from "./lib/dxf";
-import { fmtFtIn, normalize, sizeOf, worldBox, unite } from "./lib/transform";
-import { buildIndex, computeGaps, dname, getItem, itemsAll, movesJSON, setT, tOf, withWorldSize } from "./model";
-import { ItemView, StaticLayer } from "./Prims";
+import { fmtFtIn, normalize, sizeOf, worldBox, unite, makeXf } from "./lib/transform";
+import { bakeItem, buildIndex, canReshape, computeGaps, dname, exportView, getItem, itemsAll, movesJSON, setPts, setT, tOf, wallPts, withWorldSize } from "./model";
+import { ItemView } from "./Prims";
 import { HistoryPanel, SharePanel } from "./Panels";
 import { useBoardSync } from "./useBoardSync";
 
@@ -53,6 +53,9 @@ function Editor({ api, planId, onBack, sync, toast }) {
   const [size, setSize] = useState({ w: 1, h: 1 });
   const [dragId, setDragId] = useState(null);
   const [filter, setFilter] = useState("");
+  const [drawMode, setDrawMode] = useState(false);
+  const [thick, setThick] = useState(4.3);
+  const [draw, setDraw] = useState(null);             // wall being drawn: {a,b}
   const [confirmReset, setConfirmReset] = useState(false);
   const svgRef = useRef(), rootRef = useRef(), fileRef = useRef();
   const userZoomed = useRef(false);
@@ -60,8 +63,8 @@ function Editor({ api, planId, onBack, sync, toast }) {
 
   const cur = preview ? preview.state : state;
   const locked = !!preview;
-  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups]);
-  const L = useRef({}); L.current = { cur, selected, snap, view, locked, index, sync };
+  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups, cur.walls, cur.geo, cur.txt]);
+  const L = useRef({}); L.current = { cur, selected, snap, view, locked, index, sync, drawMode, thick };
 
   /* ----- view ----- */
   const fit = useCallback(() => {
@@ -114,7 +117,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
   const onItemDown = useCallback((e) => {
     const { locked, selected, cur, sync } = L.current;
     if (e.button > 0) return;
-    if (locked) return;
+    if (locked || L.current.drawMode) return;
     const id = e.currentTarget.dataset.id;
     e.stopPropagation();
     g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -131,8 +134,37 @@ function Editor({ api, planId, onBack, sync, toast }) {
     if (e.button > 0) return;
     g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (g.current.pointers.size > 1) { g.current.drag = null; startPinch(); return; }
+    if (drawMode && !locked) {
+      const a = drawPoint(toModel(e), null);
+      g.current.wall = { a, snapPts: vertexPoints() };
+      setDraw({ a, b: a }); svgRef.current.setPointerCapture(e.pointerId); return;
+    }
     g.current.pan = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
     svgRef.current.setPointerCapture(e.pointerId);
+  };
+  /* wall drawing: snap to the grid, to nearby corners, and to straight lines (Shift forces straight) */
+  const vertexPoints = () => {
+    const out = [];
+    for (const it of itemsAll(index, cur)) {
+      const t = tOf(cur, it.id); if (t.hidden || it.prims[0].t === "x" || it.prims[0].t === "c" || it.kind === "zone" || it.overhead) continue;
+      if (!(it.static || it.user)) continue;
+      const f = makeXf(it, t), pts = it.prims[0].pts;
+      for (let i = 0; i < pts.length; i += 2) out.push(f(pts[i], pts[i + 1]));
+    }
+    return out;
+  };
+  const drawPoint = (m, from, pts = [], shift = false) => {
+    let [x, y] = m;
+    if (from) {
+      const dx = x - from[0], dy = y - from[1];
+      const ang = Math.atan2(Math.abs(dy), Math.abs(dx)) * 180 / Math.PI;   // 0 = horizontal, 90 = vertical
+      if (ang < 4 || (shift && ang < 45)) y = from[1];
+      else if (ang > 86 || shift) x = from[0];
+    }
+    if (snap) { x = Math.round(x / snap) * snap; y = Math.round(y / snap) * snap; }
+    let best = 9 * pxIn;
+    for (const q of pts) { const d = Math.hypot(q[0] - m[0], q[1] - m[1]); if (d < best) { best = d; x = q[0]; y = q[1]; } }
+    return [x, y];
   };
   const onHandleDown = (e) => {
     if (e.button > 0 || locked) return; e.stopPropagation();
@@ -141,12 +173,59 @@ function Editor({ api, planId, onBack, sync, toast }) {
     g.current.rsz = { id, k: h, start: toModel(e), b0: worldBox(getItem(index, cur, id), tOf(cur, id)), before: sync.gestureStart(), moved: false };
     svgRef.current.setPointerCapture(e.pointerId);
   };
+  const onVertexDown = (e) => {
+    if (e.button > 0 || locked) return; e.stopPropagation();
+    const { id, i } = e.currentTarget.dataset;
+    const now = Date.now(), key = id + ":" + i;
+    if (lastVtx.current.k === key && now - lastVtx.current.at < 400) { lastVtx.current = { k: "", at: 0 }; deletePoint(id, +i); return; }
+    lastVtx.current = { k: key, at: now };
+    g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    g.current.vtx = { id, i: +i, before: sync.gestureStart(), moved: false };
+    svgRef.current.setPointerCapture(e.pointerId);
+  };
+  const lastVtx = useRef({ k: "", at: 0 });
+  const closedOf = (it) => it.prims[0].t === "f" || !!it.prims[0].c;
+  const deletePoint = (id, i) => {
+    const it0 = getItem(index, cur, id); if (!it0) return;
+    if (it0.prims[0].pts.length / 2 <= (closedOf(it0) ? 3 : 2)) { toast("A shape needs at least " + (closedOf(it0) ? "3 points" : "2 points") + "."); return; }
+    sync.edit((s) => {
+      const b = bakeItem(index, s, id), it = getItem(index, b, id), pts = it.prims[0].pts.slice();
+      pts.splice(2 * i, 2); return setPts(b, id, pts);
+    });
+    toast("Point deleted");
+  };
+  const onMidDown = (e) => {   // drag a midpoint dot to add a corner there
+    if (e.button > 0 || locked) return; e.stopPropagation();
+    const { id, e: ei } = e.currentTarget.dataset; const k = +ei;
+    g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const before = sync.gestureStart();
+    sync.live((s) => {
+      const b = bakeItem(index, s, id), pts = getItem(index, b, id).prims[0].pts.slice(), n = pts.length / 2, j = (k + 1) % n;
+      pts.splice(2 * (k + 1), 0, +((pts[2 * k] + pts[2 * j]) / 2).toFixed(3), +((pts[2 * k + 1] + pts[2 * j + 1]) / 2).toFixed(3));
+      return setPts(b, id, pts);
+    });
+    g.current.vtx = { id, i: k + 1, before, moved: true };
+    svgRef.current.setPointerCapture(e.pointerId);
+  };
+  const addWall = (a, b) => {
+    const id = "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    sync.edit((s) => ({ ...s, walls: [...(s.walls || []), { id, pts: wallPts(a, b, Math.max(0.5, thick)) }] }));
+    toast("Wall added. Draw another, or press Esc to finish.");
+  };
   const onMove = (e) => {
     const G = g.current;
     if (G.pointers.has(e.pointerId)) G.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (G.pinch && G.pointers.size >= 2) {
       const p = [...G.pointers.values()]; const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
       zoomAt((G.pinch.d / d) * G.pinch.w / view.w, (p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2); return;
+    }
+    if (G.wall) { const w = G.wall; setDraw({ a: w.a, b: drawPoint(toModel(e), w.a, w.snapPts, e.shiftKey) }); return; }
+    if (G.vtx) {
+      const v = G.vtx; let [x, y] = toModel(e);
+      if (snap) { x = Math.round(x / snap) * snap; y = Math.round(y / snap) * snap; }
+      if (!v.moved) { v.moved = true; sync.live((s) => bakeItem(index, s, v.id)); }
+      sync.live((s) => { const it = getItem(index, s, v.id); if (!it) return s; const pts = it.prims[0].pts.slice(); pts[2 * v.i] = +x.toFixed(3); pts[2 * v.i + 1] = +y.toFixed(3); return setPts(s, v.id, pts); });
+      return;
     }
     if (G.rsz) {
       const r = G.rsz; const m = toModel(e); let ddx = m[0] - r.start[0], ddy = m[1] - r.start[1];
@@ -175,6 +254,12 @@ function Editor({ api, planId, onBack, sync, toast }) {
   const onUp = (e) => {
     const G = g.current; G.pointers.delete(e.pointerId);
     if (G.pinch && G.pointers.size < 2) G.pinch = null;
+    if (G.wall) {
+      const w = G.wall; G.wall = null; const b = draw ? draw.b : w.a; setDraw(null);
+      if (Math.hypot(b[0] - w.a[0], b[1] - w.a[1]) >= 2) addWall(w.a, b);
+      return;
+    }
+    if (G.vtx) { if (G.vtx.moved) sync.gestureEnd(G.vtx.before); G.vtx = null; return; }
     if (G.rsz) { if (G.rsz.moved) sync.gestureEnd(G.rsz.before); G.rsz = null; return; }
     if (G.drag) { if (G.drag.moved) sync.gestureEnd(G.drag.before); G.drag = null; setDragId(null); }
     else if (G.pan) { if (!G.pan.moved) setSelected(new Set()); G.pan = null; }
@@ -202,7 +287,13 @@ function Editor({ api, planId, onBack, sync, toast }) {
       for (const id of selIds) {
         const it = getItem(index, s, id); const nid = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const t0 = tOf(s, id);
-        n.dups.push({ id: nid, src: Number(it.dupOf ?? it.id) });
+        if (it.user) {   // a drawn wall: copy it as another drawn wall
+          const f = makeXf(it, t0), src = it.prims[0].pts, pts = [];
+          for (let i = 0; i < src.length; i += 2) { const q = f(src[i], src[i + 1]); pts.push(+(q[0] + 12).toFixed(3), +(q[1] - 12).toFixed(3)); }
+          n.walls = [...(n.walls || []), { id: "w" + nid, pts }]; fresh.push("w" + nid); continue;
+        }
+        const srcId = it.dupOf ?? it.id;
+        n.dups.push({ id: nid, src: /^\d+$/.test(srcId) ? Number(srcId) : srcId });
         n.t[nid] = { dx: t0.dx + 12, dy: t0.dy - 12, rot: t0.rot, hidden: false, sx: t0.sx, sy: t0.sy };
         fresh.push(nid);
       }
@@ -225,6 +316,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
     const onKey = (e) => {
       if (e.target.matches("input,select,textarea") || locked || panel) return;
       const k = e.key; const big = e.shiftKey ? 12 : 1;
+      if (k === "Escape" && L.current.drawMode) { g.current.wall = null; setDraw(null); setDrawMode(false); return; }
       if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? sync.redo() : sync.undo(); return; }
       if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "d") { e.preventDefault(); dupSel(); return; }
       if (!selIds.length) return;
@@ -265,7 +357,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
   else { stateText = shared.updated_at ? `Saved for everyone, ${fmtDate(shared.updated_at)}${shared.updated_by_name ? " by " + shared.updated_by_name : ""}` : "Everyone sees this layout"; stateCls = "ok"; }
 
   /* ----- output ----- */
-  const exportDxf = () => { try { download((plan.name.replace(/[^\w]+/g, "_") || "floor_plan") + "_layout.dxf", buildDXF(plan.base, normalize(cur)), "application/dxf"); toast("Saved. Open the .dxf in QCAD."); } catch { toast("Couldn’t export the file."); } };
+  const exportDxf = () => { try { download((plan.name.replace(/[^\w]+/g, "_") || "floor_plan") + "_layout.dxf", (() => { const v = exportView(index, normalize(cur)); return buildDXF(v.base, v.state); })(), "application/dxf"); toast("Saved. Open the .dxf in QCAD."); } catch { toast("Couldn’t export the file."); } };
   const copyMoves = async () => {
     const txt = "Layout Board moves:\n" + JSON.stringify(movesJSON(index, cur, plan.name), null, 1);
     try { await navigator.clipboard.writeText(txt); toast("Copied. Paste it into the chat with Claude."); }
@@ -296,6 +388,8 @@ function Editor({ api, planId, onBack, sync, toast }) {
           <span className="seg" role="group" aria-label="Snap">
             {[[0, "Free"], [1, "1″"], [6, "6″"], [12, "1′"]].map(([v, l]) => <button key={v} aria-pressed={snap === v} onClick={() => setSnap(v)}>{l}</button>)}
           </span>
+          <button aria-pressed={drawMode} className={drawMode ? "primary" : undefined} disabled={locked} onClick={() => { setDrawMode((v) => !v); setDraw(null); }} title="Click and drag on the plan to draw a wall. Shift keeps it straight. Esc finishes.">{drawMode ? "Drawing walls…" : "Add wall"}</button>
+          {drawMode && <label className="thk">Thickness <input type="number" min="0.5" step="0.5" value={thick} onChange={(e) => setThick(parseFloat(e.target.value) || 4.3)} aria-label="Wall thickness in inches" />in</label>}
           {[["zones", "Zones"], ["tags", "Tags"], ["dims", "Gaps"]].map(([k, l]) => (
             <label key={k} className="chk"><input type="checkbox" checked={show[k]} onChange={(e) => setShow({ ...show, [k]: e.target.checked })} /> {l}</label>
           ))}
@@ -323,14 +417,13 @@ function Editor({ api, planId, onBack, sync, toast }) {
 
       <div className="main">
         <div className="sheet">
-          <svg id="plan" ref={svgRef} aria-label="Floor plan, drag items to move them" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+          <svg id="plan" ref={svgRef} className={drawMode ? "drawing" : undefined} aria-label="Floor plan, drag items to move them" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
             onPointerDown={onSvgDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
             <defs><pattern id="grid12" width="12" height="12" patternUnits="userSpaceOnUse"><path d="M12 0H0V12" fill="none" stroke="#e3e6eb" strokeWidth="0.35" /></pattern></defs>
             <g ref={rootRef} transform="scale(1,-1)">
               <rect x={index.allB[0] - 600} y={index.allB[1] - 600} width={index.allB[2] - index.allB[0] + 1200} height={index.allB[3] - index.allB[1] + 1200} fill="url(#grid12)" />
               <g data-layer="zones" style={show.zones ? undefined : { display: "none" }}>{renderItems(groups.zones)}</g>
               <g data-layer="walls">{renderItems(groups.walls)}</g>
-              <StaticLayer prims={plan.base.static} />
               <g data-layer="items">{renderItems(groups.mid)}</g>
               <g data-layer="overhead">{renderItems(groups.over)}</g>
               <g data-layer="selection">
@@ -342,13 +435,25 @@ function Editor({ api, planId, onBack, sync, toast }) {
                   return (
                     <g key={id}>
                       <rect className="selbox" x={b[0] - 1.5} y={b[1] - 1.5} width={b[2] - b[0] + 3} height={b[3] - b[1] + 3} />
-                      {canResize(id) && !locked && Object.entries(H).map(([k, [x, y]]) => (
+                      {selIds.length === 1 && canReshape(it) && !locked && !drawMode && (() => {
+                        const f = makeXf(it, t), pts = it.prims[0].pts, r = [];
+                        const n = pts.length / 2, edges = closedOf(it) ? n : n - 1;
+                        for (let k = 0; k < edges; k++) {
+                          const j = (k + 1) % n, a = f(pts[2 * k], pts[2 * k + 1]), c = f(pts[2 * j], pts[2 * j + 1]);
+                          if (Math.hypot(a[0] - c[0], a[1] - c[1]) < 1) continue;
+                          r.push(<circle key={"m" + k} className="mh" data-id={id} data-e={k} cx={(a[0] + c[0]) / 2} cy={(a[1] + c[1]) / 2} r={hs * 0.32} onPointerDown={onMidDown} />);
+                        }
+                        for (let i = 0; i < pts.length; i += 2) { const q = f(pts[i], pts[i + 1]); r.push(<rect key={"v" + i} className="vh" data-id={id} data-i={i / 2} x={q[0] - hs * 0.4} y={q[1] - hs * 0.4} width={hs * 0.8} height={hs * 0.8} onPointerDown={onVertexDown} />); }
+                        return r;
+                      })()}
+                      {canResize(id) && !locked && !drawMode && selIds.length === 1 && !canReshape(it) && Object.entries(H).map(([k, [x, y]]) => (
                         <rect key={k} className={"handle h-" + k} data-h={k} data-id={id} x={x - hs / 2} y={y - hs / 2} width={hs} height={hs} onPointerDown={onHandleDown} />
                       ))}
                     </g>
                   );
                 })}
               </g>
+              {draw && <polygon className="wallprev" points={(() => { const q = wallPts(draw.a, draw.b, Math.max(0.5, thick)); return `${q[0]},${q[1]} ${q[2]},${q[3]} ${q[4]},${q[5]} ${q[6]},${q[7]}`; })()} />}
               <g className="dim">
                 {gaps.map((q) => {
                   const horiz = q.dir === "L" || q.dir === "R"; const cap = 3 * pxIn;
@@ -370,13 +475,13 @@ function Editor({ api, planId, onBack, sync, toast }) {
             <button aria-label="Zoom out" onClick={() => zoomBtn(1.33)}>−</button>
             <button aria-label="Fit to sheet" onClick={() => { fit(); userZoomed.current = false; }}>⤢</button>
           </div>
-          <div className="hint">Drag to move · drag a corner or edge square to resize · R rotate · arrows nudge 1″ · drag empty space to pan</div>
+          <div className="hint">{drawMode ? "Click and drag to draw a wall · Shift keeps it straight · snaps to corners · Esc to finish" : "Drag to move · drag a corner or edge square to resize · R rotate · arrows nudge 1″ · drag empty space to pan"}</div>
         </div>
 
         <aside>
           <div className="insp" aria-label="Inspector">
             {!selIds.length && (
-              <div className="empty"><strong>Nothing selected.</strong><br />Click or tap an item on the plan, or pick one from the list. Shift-click adds more items so they move together. Interior walls and doors move too; the outside walls stay put. Drag the small squares on a selected item to resize it. The pink lines show the open space from the selected item to the nearest wall or item.</div>
+              <div className="empty"><strong>Nothing selected.</strong><br />Click or tap an item on the plan, or pick one from the list. Shift-click adds more items so they move together. Every wall, line and label can be selected, moved, rotated or removed. Use “Add wall” to draw new walls. Drag the small squares on a selected item to resize it, or the corner dots on a wall or line to reshape it. Drag a small round dot between corners to add a corner; double-click a corner to delete it. The pink lines show the open space from the selected item to the nearest wall or item.</div>
             )}
             {selIds.length > 0 && (<>
               <h2>
@@ -396,6 +501,10 @@ function Editor({ api, planId, onBack, sync, toast }) {
                   <dl className="kv"><dt>Size</dt><dd>{fmt(w)} × {fmt(d)}</dd><dt>Moved</dt><dd>{mv.length ? mv.join(", ") : "Not moved"}</dd><dt>Rotation</dt><dd>{((st1.rot % 360) + 360) % 360}°</dd></dl>
                   <div className="sizer">{field("Width", w, "w")}{field("Depth", d, "d")}
                     {(Math.abs(st1.sx - 1) > 1e-6 || Math.abs(st1.sy - 1) > 1e-6) && <button onClick={() => originalSize(single.id)} disabled={locked}>Original size</button>}</div>
+                  {single.static && single.prims[0].t === "x" && !single.dupOf && (
+                    <label className="szf" style={{ display: "block" }}><span>Label text</span>
+                      <textarea key={single.prims[0].s} rows={2} style={{ width: "100%", font: "13px inherit", marginTop: 4 }} defaultValue={single.prims[0].s} disabled={locked}
+                        onBlur={(e) => { const v = e.target.value; if (v !== single.prims[0].s) sync.edit((s) => ({ ...s, txt: { ...(s.txt || {}), [single.id]: v } })); }} /></label>)}
                   {!canResize(single.id) && <div className="empty">Resize handles show when the item is turned to a multiple of 90°. You can still type a size above.</div>}
                 </>);
               })()}

@@ -60,6 +60,13 @@
 .lb .confirm{display:flex;gap:6px;align-items:center;font-size:12px}
 /* drawing */
 .lb .it .hit{fill:transparent;cursor:grab}
+.lb .it .shit{fill:none;stroke:transparent;stroke-width:12px;vector-effect:non-scaling-stroke;pointer-events:stroke;cursor:grab}
+.lb .it.static path[fill]:not([fill=none]){cursor:grab}
+.lb svg.drawing,.lb svg.drawing .it,.lb svg.drawing .it *{cursor:crosshair!important}
+.lb .vh{fill:#fff;stroke:var(--accent);stroke-width:1.5px;vector-effect:non-scaling-stroke;cursor:move}
+.lb .wallprev{fill:#6f7378;fill-opacity:.55;stroke:var(--accent);stroke-width:1.2px;vector-effect:non-scaling-stroke;pointer-events:none}
+.lb .thk{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.lb .thk input{width:60px;font:13px var(--font-mono);padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
 .lb .it.dragging .hit{cursor:grabbing}
 .lb .it.overhead path,.lb .it.overhead polyline,.lb .it.overhead polygon{stroke-dasharray:3 2}
 .lb .handle{fill:#fff;stroke:var(--accent);stroke-width:1.5px;vector-effect:non-scaling-stroke;cursor:nwse-resize}
@@ -103,3 +110,6 @@
 .lb [hidden]{display:none!important}
 /* status line always sits on its own row so the header height never changes while editing */
 .lb .savestate{flex:1 0 100%;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.5em}
+
+.lb .mh{fill:var(--accent);fill-opacity:.35;stroke:var(--accent);stroke-width:1px;vector-effect:non-scaling-stroke;cursor:copy}
+.lb .mh:hover{fill-opacity:.9}
