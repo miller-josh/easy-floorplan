@@ -24,7 +24,16 @@ function validState(s) {
     for (const f of ["dx", "dy", "rot", "sx", "sy"]) if (typeof v[f] !== "number" || !Number.isFinite(v[f])) return false;
     if (typeof v.hidden !== "boolean") return false;
   }
-  for (const d of s.dups) if (!d || typeof d.id !== "string" || !Number.isInteger(d.src)) return false;
+  for (const d of s.dups) if (!d || typeof d.id !== "string" || !(Number.isInteger(d.src) || (typeof d.src === "string" && d.src))) return false;
+  const nums = (a) => Array.isArray(a) && a.length >= 4 && a.length % 2 === 0 && a.length <= 2000 && a.every((n) => typeof n === "number" && Number.isFinite(n));
+  if (s.walls !== undefined) {
+    if (!Array.isArray(s.walls) || s.walls.length > 2000) return false;
+    for (const w of s.walls) if (!w || typeof w.id !== "string" || !nums(w.pts)) return false;
+  }
+  if (s.geo !== undefined) {
+    if (!s.geo || typeof s.geo !== "object" || Array.isArray(s.geo)) return false;
+    for (const k in s.geo) if (!nums(s.geo[k])) return false;
+  }
   return true;
 }
 

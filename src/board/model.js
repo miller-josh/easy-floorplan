@@ -1,5 +1,5 @@
 // Plan index and geometry helpers for the board. Pivot math lives in ./lib/transform.ts (unchanged from the handoff).
-import { primBox, unite, itemFrame, worldBox, sizeOf, fmtFtIn, DEFAULT_T } from "./lib/transform";
+import { primBox, unite, itemFrame, worldBox, sizeOf, fmtFtIn, makeXf, DEFAULT_T } from "./lib/transform";
 
 export const EMPTY_STATE = { t: {}, dups: [] };
 
@@ -12,6 +12,16 @@ export function buildIndex(base) {
     const e = { ...it, id: String(it.id), cx: f.cx, cy: f.cy, box: f.box, tagC: f.tagC, overhead: it.name.startsWith("Overhead") };
     byId.set(e.id, e); list.push(e);
   }
+  // Every fixed wall, shell line and label is an item too, so it can be selected, moved, reshaped or removed.
+  const counts = {};
+  base.static.forEach((p, i) => {
+    const kind = p.t === "x" ? "Label" : p.t === "f" ? "Wall piece" : p.L === "WALLS" ? "Wall outline" : "Building line";
+    counts[kind] = (counts[kind] || 0) + 1;
+    const it = { id: "s" + i, name: p.t === "x" ? p.s.split("\n")[0] : kind + " " + counts[kind], kind: "wall", tag: null, prims: [p], static: true };
+    const f = itemFrame(it);
+    const e = { ...it, cx: f.cx, cy: f.cy, box: f.box, tagC: null, overhead: false };
+    byId.set(e.id, e); list.push(e);
+  });
   const wallSegs = [];
   for (const p of base.static) {
     if (p.t === "f" && p.L === "WALLS") {
@@ -19,7 +29,7 @@ export function buildIndex(base) {
       for (let i = 0; i < n; i++) { const j = (i + 1) % n; wallSegs.push([q[2 * i], q[2 * i + 1], q[2 * j], q[2 * j + 1]]); }
     }
   }
-  const allB = unite(base.static.filter((p) => p.t !== "x").map(primBox).concat(list.map((i) => i.box)));
+  const allB = unite(list.filter((i) => !(i.static && i.prims[0].t === "x")).map((i) => i.box));
   return { base, byId, list, wallSegs, allB };
 }
 
@@ -28,22 +38,96 @@ export const tOf = (state, id) => {
   return t ? (t.sx == null || t.sy == null ? { ...DEFAULT_T, ...t, sx: t.sx ?? 1, sy: t.sy ?? 1 } : t) : DEFAULT_T;
 };
 
-export function getItem(index, state, id) {
-  id = String(id);
-  const b = index.byId.get(id);
-  if (b) return b;
-  const d = state.dups.find((x) => x.id === id);
-  const src = d && index.byId.get(String(d.src));
-  return src ? { ...src, id: d.id, dupOf: src.id } : null;
-}
-export function itemsAll(index, state) {
-  const out = index.list.slice();
-  for (const d of state.dups) { const it = getItem(index, state, d.id); if (it) out.push(it); }
+/* ---------- editable geometry: reshaped static lines (state.geo) and walls drawn by the user (state.walls) ---------- */
+export function triangulate(pts) {
+  const n = pts.length / 2, idx = [...Array(n).keys()];
+  const X = (i) => pts[2 * i], Y = (i) => pts[2 * i + 1];
+  let area = 0; for (let i = 0; i < n; i++) { const j = (i + 1) % n; area += X(i) * Y(j) - X(j) * Y(i); }
+  const sg = area >= 0 ? 1 : -1, out = [];
+  const inTri = (p, a, b, c) => {
+    const d = (p1, p2, p3) => (X(p1) - X(p3)) * (Y(p2) - Y(p3)) - (X(p2) - X(p3)) * (Y(p1) - Y(p3));
+    const d1 = d(p, a, b), d2 = d(p, b, c), d3 = d(p, c, a);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  let guard = 0;
+  while (idx.length > 3 && guard++ < 2000) {
+    let cut = false;
+    for (let k = 0; k < idx.length; k++) {
+      const a = idx[(k + idx.length - 1) % idx.length], b = idx[k], c = idx[(k + 1) % idx.length];
+      if (((X(b) - X(a)) * (Y(c) - Y(a)) - (Y(b) - Y(a)) * (X(c) - X(a))) * sg <= 1e-9) continue;
+      if (idx.some((q) => q !== a && q !== b && q !== c && inTri(q, a, b, c))) continue;
+      out.push(a, b, c); idx.splice(k, 1); cut = true; break;
+    }
+    if (!cut) break;
+  }
+  if (idx.length >= 3) for (let k = 1; k < idx.length - 1; k++) out.push(idx[0], idx[k], idx[k + 1]);
   return out;
 }
 
+const geoCache = new WeakMap(), wallCache = new WeakMap();
+function withPts(e, pts) {
+  const hit = geoCache.get(pts); if (hit && hit.e === e) return hit.out;
+  const p = e.prims[0]; const np = p.t === "f" ? { ...p, pts, tri: triangulate(pts) } : { ...p, pts };
+  const f = itemFrame({ prims: [np] });
+  const out = { ...e, prims: [np], cx: f.cx, cy: f.cy, box: f.box };
+  geoCache.set(pts, { e, out }); return out;
+}
+function wallItem(w) {
+  let out = wallCache.get(w); if (out) return out;
+  const prim = { t: "f", pts: w.pts, tri: triangulate(w.pts), f: "#6f7378", o: 1, L: "WALLS" };
+  const it = { id: w.id, name: "New wall", kind: "wall", tag: null, prims: [prim], user: true };
+  const f = itemFrame(it);
+  out = { ...it, cx: f.cx, cy: f.cy, box: f.box, tagC: null, overhead: false };
+  wallCache.set(w, out); return out;
+}
+/** Four corners of a wall drawn from a to b with the given thickness (inches), centered on the line a-b. */
+export function wallPts(a, b, th) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * th / 2, ny = (dx / len) * th / 2;
+  return [a[0] + nx, a[1] + ny, b[0] + nx, b[1] + ny, b[0] - nx, b[1] - ny, a[0] - nx, a[1] - ny].map((v) => +v.toFixed(3));
+}
+export const canReshape = (it) => !!it && !it.dupOf && (it.user || (it.static && it.prims[0].t !== "x"));
+export const userWalls = (state) => state.walls || [];
+
+export function getItem(index, state, id) {
+  id = String(id);
+  const b = index.byId.get(id);
+  if (b) { const g = state.geo && state.geo[id]; return g ? withPts(b, g) : b; }
+  const w = userWalls(state).find((x) => x.id === id);
+  if (w) return wallItem(w);
+  const d = state.dups.find((x) => x.id === id);
+  const src = d && getItem(index, state, String(d.src));
+  return src ? { ...src, id: d.id, dupOf: src.id } : null;
+}
+export function itemsAll(index, state) {
+  const g = state.geo || {};
+  const out = index.list.map((e) => (g[e.id] ? withPts(e, g[e.id]) : e));
+  for (const w of userWalls(state)) out.push(wallItem(w));
+  for (const d of state.dups) { const it = getItem(index, state, d.id); if (it) out.push(it); }
+  return out;
+}
+/** Replace the points of a reshapeable item. */
+export function setPts(state, id, pts) {
+  if (userWalls(state).some((w) => w.id === id)) return { ...state, walls: state.walls.map((w) => (w.id === id ? { ...w, pts } : w)) };
+  return { ...state, geo: { ...(state.geo || {}), [id]: pts } };
+}
+/** Fold an item's move/rotate/resize into its points so single corners can be dragged. */
+export function bakeItem(index, state, id) {
+  const it = getItem(index, state, id), t = tOf(state, id);
+  if (!it || (!t.dx && !t.dy && !t.rot && t.sx === 1 && t.sy === 1)) return state;
+  const f = makeXf(it, t), src = it.prims[0].pts, pts = [];
+  for (let i = 0; i < src.length; i += 2) { const q = f(src[i], src[i + 1]); pts.push(+q[0].toFixed(3), +q[1].toFixed(3)); }
+  return setT(setPts(state, id, pts), id, { dx: 0, dy: 0, rot: 0, sx: 1, sy: 1 });
+}
+/** Plan + layout in the shape the DXF writer expects, with edits folded in. */
+export function exportView(index, state) {
+  const items = itemsAll(index, state).map((i) => ({ ...i }));
+  const t = {}; for (const i of items) if (state.t[i.id]) t[i.id] = state.t[i.id];
+  return { base: { static: [], items }, state: { t, dups: [] } };
+}
+
 export const wbox = (it, t) => worldBox(it, t);
-export const dname = (it, t) => it.kind === "wall" ? "Wall · " + fmtFtIn(Math.max(...sizeOf(it, t))) + " long" : it.name;
+export const dname = (it, t) => it.static ? it.name : it.kind === "wall" ? "Wall · " + fmtFtIn(Math.max(...sizeOf(it, t))) + " long" : it.name;
 
 /* ---------- gap lines ---------- */
 export function rayHit(index, x, y, dir, boxes) {
@@ -77,7 +161,7 @@ export function computeGaps(index, state, id) {
   if (!it || t.hidden || it.kind === "zone") return [];
   const b = worldBox(it, t);
   const boxes = itemsAll(index, state)
-    .filter((i) => i.id !== String(id) && i.kind !== "zone" && !i.overhead && !tOf(state, i.id).hidden)
+    .filter((i) => i.id !== String(id) && i.kind !== "zone" && !i.static && !i.overhead && !tOf(state, i.id).hidden)
     .map((i) => worldBox(i, tOf(state, i.id)));
   const res = [];
   for (const dir of ["L", "R", "D", "U"]) {
@@ -120,7 +204,7 @@ export function movesJSON(index, state, planName) {
     const t = state.t[it.id]; if (!t) continue;
     if (!(t.dx || t.dy || t.rot || t.hidden || it.dupOf || t.sx !== 1 || t.sy !== 1)) continue;
     const sz = sizeOf(it, t), b = worldBox(it, t);
-    moves.push({ item: dname(it, t), tag: it.tag || undefined, id: it.id, copyOf: it.dupOf ? Number(it.dupOf) : undefined, removed: t.hidden || undefined,
+    moves.push({ item: dname(it, t), tag: it.tag || undefined, id: it.id, copyOf: it.dupOf ? (isNaN(Number(it.dupOf)) ? it.dupOf : Number(it.dupOf)) : undefined, removed: t.hidden || undefined,
       move_right_in: +t.dx.toFixed(2), move_up_in: +t.dy.toFixed(2), rotate_ccw_deg: t.rot, resized: (t.sx !== 1 || t.sy !== 1) || undefined,
       size_w_by_d_in: [+sz[0].toFixed(1), +sz[1].toFixed(1)], new_box_in: b.map((v) => +v.toFixed(1)) });
   }

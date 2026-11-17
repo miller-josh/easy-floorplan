@@ -66,7 +66,10 @@ export function normalize(st: LayoutState): LayoutState {
     if (v.dx || v.dy || v.rot || v.hidden || (v.sx ?? 1) !== 1 || (v.sy ?? 1) !== 1)
       t[k] = { dx: v.dx || 0, dy: v.dy || 0, rot: v.rot || 0, hidden: !!v.hidden, sx: v.sx ?? 1, sy: v.sy ?? 1 };
   }
-  return { t, dups: (st.dups || []).filter(d => (t[d.id] ? !t[d.id].hidden : true)) };
+  const out: LayoutState = { t, dups: (st.dups || []).filter(d => (t[d.id] ? !t[d.id].hidden : true)) };
+  if (st.walls && st.walls.length) out.walls = st.walls;
+  if (st.geo && Object.keys(st.geo).length) out.geo = st.geo;
+  return out;
 }
 
 /** Clearance zone labels like "45.71 sq ft" update with the zone's scale. */

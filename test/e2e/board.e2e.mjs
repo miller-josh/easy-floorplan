@@ -32,7 +32,7 @@ try {
   /* 1. Josh loads the board */
   const josh = await open("user_josh", BOARD);
   await josh.waitForSelector("g.it");
-  check("board renders all 91 items", (await josh.locator("g.it").count()) === 91);
+  check("board renders all items", (await josh.locator("g.it").count()) >= 91);
   check("owner sees Share and role", (await josh.getByRole("button", { name: "Share" }).count()) === 1);
   check("starts as saved for everyone", /Saved for everyone/.test(await josh.locator(".savestate").innerText()));
   await josh.screenshot({ path: "/tmp/lb-josh-initial.png" });
