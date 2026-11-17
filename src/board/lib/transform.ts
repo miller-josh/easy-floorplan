@@ -69,6 +69,7 @@ export function normalize(st: LayoutState): LayoutState {
   const out: LayoutState = { t, dups: (st.dups || []).filter(d => (t[d.id] ? !t[d.id].hidden : true)) };
   if (st.walls && st.walls.length) out.walls = st.walls;
   if (st.geo && Object.keys(st.geo).length) out.geo = st.geo;
+  if (st.txt && Object.keys(st.txt).length) out.txt = st.txt;
   return out;
 }
 

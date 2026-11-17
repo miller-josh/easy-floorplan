@@ -89,10 +89,21 @@ export function wallPts(a, b, th) {
 export const canReshape = (it) => !!it && !it.dupOf && (it.user || (it.static && it.prims[0].t !== "x"));
 export const userWalls = (state) => state.walls || [];
 
+const txtCache = new WeakMap();
+function withText(e, text) {
+  const hit = txtCache.get(e); if (hit && hit.text === text) return hit.out;
+  const out = { ...e, prims: [{ ...e.prims[0], s: text }], name: text.split("\n")[0] || "Label" };
+  txtCache.set(e, { text, out }); return out;
+}
+function resolveStatic(e, state) {
+  const g = state.geo && state.geo[e.id], x = state.txt && state.txt[e.id];
+  return g ? withPts(e, g) : typeof x === "string" && e.prims[0].t === "x" ? withText(e, x) : e;
+}
+
 export function getItem(index, state, id) {
   id = String(id);
   const b = index.byId.get(id);
-  if (b) { const g = state.geo && state.geo[id]; return g ? withPts(b, g) : b; }
+  if (b) return resolveStatic(b, state);
   const w = userWalls(state).find((x) => x.id === id);
   if (w) return wallItem(w);
   const d = state.dups.find((x) => x.id === id);
@@ -100,8 +111,7 @@ export function getItem(index, state, id) {
   return src ? { ...src, id: d.id, dupOf: src.id } : null;
 }
 export function itemsAll(index, state) {
-  const g = state.geo || {};
-  const out = index.list.map((e) => (g[e.id] ? withPts(e, g[e.id]) : e));
+  const out = index.list.map((e) => resolveStatic(e, state));
   for (const w of userWalls(state)) out.push(wallItem(w));
   for (const d of state.dups) { const it = getItem(index, state, d.id); if (it) out.push(it); }
   return out;
@@ -130,9 +140,9 @@ export const wbox = (it, t) => worldBox(it, t);
 export const dname = (it, t) => it.static ? it.name : it.kind === "wall" ? "Wall · " + fmtFtIn(Math.max(...sizeOf(it, t))) + " long" : it.name;
 
 /* ---------- gap lines ---------- */
-export function rayHit(index, x, y, dir, boxes) {
+export function rayHit(segs, x, y, dir, boxes) {
   let best = Infinity;
-  for (const [ax, ay, bx, by] of index.wallSegs) {
+  for (const [ax, ay, bx, by] of segs) {
     if (dir === "L" || dir === "R") {
       if ((ay - y) * (by - y) > 0 || ay === by) continue;
       const ix = ax + (y - ay) * (bx - ax) / (by - ay);
@@ -160,6 +170,15 @@ export function computeGaps(index, state, id) {
   const t = tOf(state, id);
   if (!it || t.hidden || it.kind === "zone") return [];
   const b = worldBox(it, t);
+  // Wall edges at their current positions (moved, reshaped, drawn), not where they started.
+  const segs = [];
+  for (const w of itemsAll(index, state)) {
+    const p = w.prims[0]; if (w.id === String(id) || !(w.static || w.user) || p.t !== "f" || p.L !== "WALLS") continue;
+    const wt = tOf(state, w.id); if (wt.hidden) continue;
+    const f = makeXf(w, wt), n = p.pts.length / 2, q = [];
+    for (let i = 0; i < n; i++) q.push(f(p.pts[2 * i], p.pts[2 * i + 1]));
+    for (let i = 0; i < n; i++) { const a = q[i], c = q[(i + 1) % n]; segs.push([a[0], a[1], c[0], c[1]]); }
+  }
   const boxes = itemsAll(index, state)
     .filter((i) => i.id !== String(id) && i.kind !== "zone" && !i.static && !i.overhead && !tOf(state, i.id).hidden)
     .map((i) => worldBox(i, tOf(state, i.id)));
@@ -170,10 +189,10 @@ export function computeGaps(index, state, id) {
       const f = k / 6;
       if (dir === "L" || dir === "R") {
         const y = b[1] + (b[3] - b[1]) * f, x = dir === "L" ? b[0] : b[2];
-        const d = rayHit(index, x, y, dir, boxes); if (d < best.d) best = { d, x, y };
+        const d = rayHit(segs, x, y, dir, boxes); if (d < best.d) best = { d, x, y };
       } else {
         const x = b[0] + (b[2] - b[0]) * f, y = dir === "D" ? b[1] : b[3];
-        const d = rayHit(index, x, y, dir, boxes); if (d < best.d) best = { d, x, y };
+        const d = rayHit(segs, x, y, dir, boxes); if (d < best.d) best = { d, x, y };
       }
     }
     if (best.d < 600) {

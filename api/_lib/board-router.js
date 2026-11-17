@@ -34,6 +34,10 @@ function validState(s) {
     if (!s.geo || typeof s.geo !== "object" || Array.isArray(s.geo)) return false;
     for (const k in s.geo) if (!nums(s.geo[k])) return false;
   }
+  if (s.txt !== undefined) {
+    if (!s.txt || typeof s.txt !== "object" || Array.isArray(s.txt)) return false;
+    for (const k in s.txt) if (typeof s.txt[k] !== "string" || s.txt[k].length > 500) return false;
+  }
   return true;
 }
 

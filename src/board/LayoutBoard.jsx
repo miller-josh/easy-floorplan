@@ -63,7 +63,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
 
   const cur = preview ? preview.state : state;
   const locked = !!preview;
-  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups, cur.walls, cur.geo]);
+  const items = useMemo(() => itemsAll(index, cur), [index, cur.dups, cur.walls, cur.geo, cur.txt]);
   const L = useRef({}); L.current = { cur, selected, snap, view, locked, index, sync, drawMode, thick };
 
   /* ----- view ----- */
@@ -501,6 +501,10 @@ function Editor({ api, planId, onBack, sync, toast }) {
                   <dl className="kv"><dt>Size</dt><dd>{fmt(w)} × {fmt(d)}</dd><dt>Moved</dt><dd>{mv.length ? mv.join(", ") : "Not moved"}</dd><dt>Rotation</dt><dd>{((st1.rot % 360) + 360) % 360}°</dd></dl>
                   <div className="sizer">{field("Width", w, "w")}{field("Depth", d, "d")}
                     {(Math.abs(st1.sx - 1) > 1e-6 || Math.abs(st1.sy - 1) > 1e-6) && <button onClick={() => originalSize(single.id)} disabled={locked}>Original size</button>}</div>
+                  {single.static && single.prims[0].t === "x" && !single.dupOf && (
+                    <label className="szf" style={{ display: "block" }}><span>Label text</span>
+                      <textarea key={single.prims[0].s} rows={2} style={{ width: "100%", font: "13px inherit", marginTop: 4 }} defaultValue={single.prims[0].s} disabled={locked}
+                        onBlur={(e) => { const v = e.target.value; if (v !== single.prims[0].s) sync.edit((s) => ({ ...s, txt: { ...(s.txt || {}), [single.id]: v } })); }} /></label>)}
                   {!canResize(single.id) && <div className="empty">Resize handles show when the item is turned to a multiple of 90°. You can still type a size above.</div>}
                 </>);
               })()}

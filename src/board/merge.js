@@ -23,5 +23,8 @@ export function mergeStates(base, mine, theirs) {
   const geo = { ...(theirs.geo || {}) }, bg = base.geo || {}, mg = mine.geo || {};
   for (const k of new Set([...Object.keys(bg), ...Object.keys(mg)])) if (JSON.stringify(bg[k]) !== JSON.stringify(mg[k])) { if (mg[k]) geo[k] = mg[k]; else delete geo[k]; }
   if (Object.keys(geo).length) out.geo = geo;
+  const txt = { ...(theirs.txt || {}) }, bt = base.txt || {}, mt = mine.txt || {};
+  for (const k of new Set([...Object.keys(bt), ...Object.keys(mt)])) if (bt[k] !== mt[k]) { if (mt[k] !== undefined) txt[k] = mt[k]; else delete txt[k]; }
+  if (Object.keys(txt).length) out.txt = txt;
   return out;
 }
