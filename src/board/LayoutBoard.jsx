@@ -176,8 +176,35 @@ function Editor({ api, planId, onBack, sync, toast }) {
   const onVertexDown = (e) => {
     if (e.button > 0 || locked) return; e.stopPropagation();
     const { id, i } = e.currentTarget.dataset;
+    const now = Date.now(), key = id + ":" + i;
+    if (lastVtx.current.k === key && now - lastVtx.current.at < 400) { lastVtx.current = { k: "", at: 0 }; deletePoint(id, +i); return; }
+    lastVtx.current = { k: key, at: now };
     g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     g.current.vtx = { id, i: +i, before: sync.gestureStart(), moved: false };
+    svgRef.current.setPointerCapture(e.pointerId);
+  };
+  const lastVtx = useRef({ k: "", at: 0 });
+  const closedOf = (it) => it.prims[0].t === "f" || !!it.prims[0].c;
+  const deletePoint = (id, i) => {
+    const it0 = getItem(index, cur, id); if (!it0) return;
+    if (it0.prims[0].pts.length / 2 <= (closedOf(it0) ? 3 : 2)) { toast("A shape needs at least " + (closedOf(it0) ? "3 points" : "2 points") + "."); return; }
+    sync.edit((s) => {
+      const b = bakeItem(index, s, id), it = getItem(index, b, id), pts = it.prims[0].pts.slice();
+      pts.splice(2 * i, 2); return setPts(b, id, pts);
+    });
+    toast("Point deleted");
+  };
+  const onMidDown = (e) => {   // drag a midpoint dot to add a corner there
+    if (e.button > 0 || locked) return; e.stopPropagation();
+    const { id, e: ei } = e.currentTarget.dataset; const k = +ei;
+    g.current.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const before = sync.gestureStart();
+    sync.live((s) => {
+      const b = bakeItem(index, s, id), pts = getItem(index, b, id).prims[0].pts.slice(), n = pts.length / 2, j = (k + 1) % n;
+      pts.splice(2 * (k + 1), 0, +((pts[2 * k] + pts[2 * j]) / 2).toFixed(3), +((pts[2 * k + 1] + pts[2 * j + 1]) / 2).toFixed(3));
+      return setPts(b, id, pts);
+    });
+    g.current.vtx = { id, i: k + 1, before, moved: true };
     svgRef.current.setPointerCapture(e.pointerId);
   };
   const addWall = (a, b) => {
@@ -410,6 +437,12 @@ function Editor({ api, planId, onBack, sync, toast }) {
                       <rect className="selbox" x={b[0] - 1.5} y={b[1] - 1.5} width={b[2] - b[0] + 3} height={b[3] - b[1] + 3} />
                       {selIds.length === 1 && canReshape(it) && !locked && !drawMode && (() => {
                         const f = makeXf(it, t), pts = it.prims[0].pts, r = [];
+                        const n = pts.length / 2, edges = closedOf(it) ? n : n - 1;
+                        for (let k = 0; k < edges; k++) {
+                          const j = (k + 1) % n, a = f(pts[2 * k], pts[2 * k + 1]), c = f(pts[2 * j], pts[2 * j + 1]);
+                          if (Math.hypot(a[0] - c[0], a[1] - c[1]) < 1) continue;
+                          r.push(<circle key={"m" + k} className="mh" data-id={id} data-e={k} cx={(a[0] + c[0]) / 2} cy={(a[1] + c[1]) / 2} r={hs * 0.32} onPointerDown={onMidDown} />);
+                        }
                         for (let i = 0; i < pts.length; i += 2) { const q = f(pts[i], pts[i + 1]); r.push(<rect key={"v" + i} className="vh" data-id={id} data-i={i / 2} x={q[0] - hs * 0.4} y={q[1] - hs * 0.4} width={hs * 0.8} height={hs * 0.8} onPointerDown={onVertexDown} />); }
                         return r;
                       })()}
@@ -448,7 +481,7 @@ function Editor({ api, planId, onBack, sync, toast }) {
         <aside>
           <div className="insp" aria-label="Inspector">
             {!selIds.length && (
-              <div className="empty"><strong>Nothing selected.</strong><br />Click or tap an item on the plan, or pick one from the list. Shift-click adds more items so they move together. Every wall, line and label can be selected, moved, rotated or removed. Use “Add wall” to draw new walls. Drag the small squares on a selected item to resize it, or the corner dots on a wall or line to reshape it. The pink lines show the open space from the selected item to the nearest wall or item.</div>
+              <div className="empty"><strong>Nothing selected.</strong><br />Click or tap an item on the plan, or pick one from the list. Shift-click adds more items so they move together. Every wall, line and label can be selected, moved, rotated or removed. Use “Add wall” to draw new walls. Drag the small squares on a selected item to resize it, or the corner dots on a wall or line to reshape it. Drag a small round dot between corners to add a corner; double-click a corner to delete it. The pink lines show the open space from the selected item to the nearest wall or item.</div>
             )}
             {selIds.length > 0 && (<>
               <h2>
