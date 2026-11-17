@@ -42,7 +42,7 @@ export interface DupRef { id: string; src: number | string }
 export interface UserWall { id: string; pts: number[] }
 
 /** walls = walls added by the user. geo = reshaped points for fixed lines, keyed by item id ("s12"). */
-export interface LayoutState { t: Record<string, ItemTransform>; dups: DupRef[]; walls?: UserWall[]; geo?: Record<string, number[]>; txt?: Record<string, string> }
+export interface LayoutState { t: Record<string, ItemTransform>; dups: DupRef[]; walls?: UserWall[]; geo?: Record<string, number[]>; txt?: Record<string, string>; names?: Record<string, string>; tags?: Record<string, string> }
 
 /** What gets stored as the shared layout. rev increments on every save (optimistic concurrency). */
 export interface SharedLayout { rev: number; savedAt: string | null; state: LayoutState }

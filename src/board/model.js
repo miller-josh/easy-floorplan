@@ -100,19 +100,41 @@ function resolveStatic(e, state) {
   return g ? withPts(e, g) : typeof x === "string" && e.prims[0].t === "x" ? withText(e, x) : e;
 }
 
+/** Custom name and letter for an item (state.names / state.tags). A blank letter removes the tag circle. */
+const metaCache = new WeakMap();
+function applyMeta(it, state) {
+  const nm = state.names && state.names[it.id], tg = state.tags && state.tags[it.id];
+  if (nm === undefined && tg === undefined) return it;
+  const k = nm + "|" + tg, hit = metaCache.get(it);
+  if (hit && hit.k === k) return hit.out;
+  const out = { ...it };
+  if (nm) { out.name = nm; out.named = true; }
+  if (tg !== undefined && tg !== it.tag) {
+    const rest = it.prims.filter((p) => p.L !== "TAGS");
+    if (!tg) { out.prims = rest; out.tag = null; }
+    else if (it.prims.some((p) => p.L === "TAGS" && p.t === "x")) { out.prims = it.prims.map((p) => (p.L === "TAGS" && p.t === "x" ? { ...p, s: tg } : p)); out.tag = tg; }
+    else {
+      const ink = "#2b2b2b", b = it.box, r = Math.min(7, Math.max(2, Math.min(b[2] - b[0], b[3] - b[1]) / 3));
+      out.prims = [...rest, { t: "c", x: it.cx, y: it.cy, r, s: ink, L: "TAGS" }, { t: "x", x: it.cx, y: it.cy, h: r * 0.9, r: 0, s: tg, a: "cm", col: ink, L: "TAGS", up: 1 }];
+      out.tag = tg; out.tagC = [it.cx, it.cy];
+    }
+  }
+  metaCache.set(it, { k, out }); return out;
+}
+
 export function getItem(index, state, id) {
   id = String(id);
   const b = index.byId.get(id);
-  if (b) return resolveStatic(b, state);
+  if (b) return applyMeta(resolveStatic(b, state), state);
   const w = userWalls(state).find((x) => x.id === id);
-  if (w) return wallItem(w);
+  if (w) return applyMeta(wallItem(w), state);
   const d = state.dups.find((x) => x.id === id);
   const src = d && getItem(index, state, String(d.src));
-  return src ? { ...src, id: d.id, dupOf: src.id } : null;
+  return src ? applyMeta({ ...src, id: d.id, dupOf: src.id }, state) : null;
 }
 export function itemsAll(index, state) {
-  const out = index.list.map((e) => resolveStatic(e, state));
-  for (const w of userWalls(state)) out.push(wallItem(w));
+  const out = index.list.map((e) => applyMeta(resolveStatic(e, state), state));
+  for (const w of userWalls(state)) out.push(applyMeta(wallItem(w), state));
   for (const d of state.dups) { const it = getItem(index, state, d.id); if (it) out.push(it); }
   return out;
 }
@@ -137,7 +159,7 @@ export function exportView(index, state) {
 }
 
 export const wbox = (it, t) => worldBox(it, t);
-export const dname = (it, t) => it.static ? it.name : it.kind === "wall" ? "Wall · " + fmtFtIn(Math.max(...sizeOf(it, t))) + " long" : it.name;
+export const dname = (it, t) => it.named || it.static ? it.name : it.kind === "wall" ? "Wall · " + fmtFtIn(Math.max(...sizeOf(it, t))) + " long" : it.name;
 
 /* ---------- gap lines ---------- */
 export function rayHit(segs, x, y, dir, boxes) {

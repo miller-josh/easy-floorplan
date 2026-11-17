@@ -70,6 +70,8 @@ export function normalize(st: LayoutState): LayoutState {
   if (st.walls && st.walls.length) out.walls = st.walls;
   if (st.geo && Object.keys(st.geo).length) out.geo = st.geo;
   if (st.txt && Object.keys(st.txt).length) out.txt = st.txt;
+  if (st.names && Object.keys(st.names).length) out.names = st.names;
+  if (st.tags && Object.keys(st.tags).length) out.tags = st.tags;
   return out;
 }
 

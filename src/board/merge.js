@@ -26,5 +26,10 @@ export function mergeStates(base, mine, theirs) {
   const txt = { ...(theirs.txt || {}) }, bt = base.txt || {}, mt = mine.txt || {};
   for (const k of new Set([...Object.keys(bt), ...Object.keys(mt)])) if (bt[k] !== mt[k]) { if (mt[k] !== undefined) txt[k] = mt[k]; else delete txt[k]; }
   if (Object.keys(txt).length) out.txt = txt;
+  for (const f of ["names", "tags"]) {
+    const m = { ...(theirs[f] || {}) }, b0 = base[f] || {}, m0 = mine[f] || {};
+    for (const k of new Set([...Object.keys(b0), ...Object.keys(m0)])) if (b0[k] !== m0[k]) { if (m0[k] !== undefined) m[k] = m0[k]; else delete m[k]; }
+    if (Object.keys(m).length) out[f] = m;
+  }
   return out;
 }
