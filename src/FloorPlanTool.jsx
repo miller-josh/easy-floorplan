@@ -121,18 +121,6 @@ async function sbDuplicate(client, id, userId, newName) {
   return sbSaveNew(client, userId, newName, original, original.gridW, original.gridH, (original.shapes || []).length);
 }
 
-// ── Letter tags (A, B, ... Z, AA, ...) tie list items to the floorplan ──
-function indexToTag(i) { let t = ""; i += 1; while (i > 0) { const r = (i - 1) % 26; t = String.fromCharCode(65 + r) + t; i = Math.floor((i - 1) / 26); } return t; }
-function nextFreeTag(shapes) {
-  const used = new Set(shapes.map(s => (s.tag || "").toUpperCase()));
-  for (let i = 0; ; i++) { const t = indexToTag(i); if (!used.has(t)) return t; }
-}
-function ensureTags(shapes) {
-  const out = [...shapes];
-  out.forEach((s, i) => { if (s.tag === undefined) out[i] = { ...s, tag: nextFreeTag(out) }; });
-  return out;
-}
-
 // ── File export helpers ──
 const FILE_VERSION = 2;
 function buildExportData(designName, gridW, gridH, shapes, idCounter, precision) {
@@ -276,7 +264,7 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
     setGridW(data.gridW); setGridH(data.gridH);
     setTempGridW(String(data.gridW)); setTempGridH(String(data.gridH));
     setPrecision(data.precision || 0.5);
-    setShapes(ensureTags((data.shapes || []).map(s => ({ ...s, rotation: s.rotation || 0 }))));
+    setShapes((data.shapes || []).map(s => ({ ...s, rotation: s.rotation || 0 })));
     setIdCounter(data.idCounter || (data.shapes?.length ? Math.max(...data.shapes.map(s => s.id)) + 1 : 1));
     setDesignName(data.designName || "Untitled Layout");
     setSelectedId(null); setHasUnsaved(false);
@@ -502,11 +490,10 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
       ctx.beginPath(); ctx.rect(-w / 2, -h / 2, w, h); ctx.clip();
       ctx.fillStyle = s.color;
       ctx.textAlign = "center";
-      const mark = s.tag || s.label || "";
-      const fs = Math.max(8, Math.min(s.tag ? 22 : 14, w / (mark.length * 0.6 + 1), h * 0.5));
+      const fs = Math.max(8, Math.min(14, w / ((s.label || "").length * 0.6 + 1), h * 0.32));
       ctx.font = `600 ${fs}px 'DM Sans', Arial, sans-serif`;
       const showDim = h > 34;
-      ctx.fillText(mark, 0, showDim ? -1 : fs / 3);
+      ctx.fillText(s.label || "", 0, showDim ? -1 : fs / 3);
       if (showDim) {
         ctx.font = `400 ${Math.max(7, fs - 3)}px monospace`;
         ctx.globalAlpha = 0.75;
@@ -556,7 +543,7 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
   const applyGridSize = () => { const w = parseFloat(tempGridW), h = parseFloat(tempGridH); if (w > 0 && h > 0) { setGridW(w); setGridH(h); } };
   const addShape = () => {
     const w = Math.max(precision, parseFloat(newW) || 2), h = Math.max(precision, parseFloat(newH) || 2);
-    setShapes(prev => [...prev, { id: idCounter, x: 0.5, y: 0.5, w, h, label: newLabel || `Item ${idCounter}`, tag: nextFreeTag(prev), color: newColor, rotation: 0 }]);
+    setShapes(prev => [...prev, { id: idCounter, x: 0.5, y: 0.5, w, h, label: newLabel || `Item ${idCounter}`, color: newColor, rotation: 0 }]);
     setSelectedId(idCounter); setIdCounter(c => c + 1); setNewLabel(""); setTab("edit");
   };
   const updateShape = (id, u) => setShapes(prev => prev.map(s => s.id === id ? { ...s, ...u } : s));
@@ -564,7 +551,7 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
   const duplicateShape = (id) => {
     const src = shapes.find(s => s.id === id); if (!src) return;
     const { bw, bh } = getRotatedBounds(src.w, src.h, src.rotation);
-    setShapes(prev => [...prev, { ...src, id: idCounter, x: snap(clamp(src.x + 1, 0, gridW - bw)), y: snap(clamp(src.y + 1, 0, gridH - bh)), label: src.label + " copy", tag: nextFreeTag(prev) }]);
+    setShapes(prev => [...prev, { ...src, id: idCounter, x: snap(clamp(src.x + 1, 0, gridW - bw)), y: snap(clamp(src.y + 1, 0, gridH - bh)), label: src.label + " copy" }]);
     setSelectedId(idCounter); setIdCounter(c => c + 1);
   };
   const rotateShape = (id, delta) => {
@@ -934,10 +921,6 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
                   <span style={{ fontSize: 11, color: "#64748b", marginLeft: "auto", fontFamily: "monospace" }}>{fmtFtIn(selected.w)}×{fmtFtIn(selected.h)}{selected.rotation ? ` ↻${selected.rotation}°` : ""}</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 11, color: "#64748b" }}>Letter (shown on plan)</span>
-                  <input type="text" value={selected.tag || ""} maxLength={3} onChange={e => updateShape(selected.id, { tag: e.target.value.toUpperCase() })} style={{ padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#f8fafc", outline: "none", fontFamily: "inherit", width: 60 }} />
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontSize: 11, color: "#64748b" }}>Label</span>
                   <input type="text" value={selected.label} onChange={e => updateShape(selected.id, { label: e.target.value })} style={{ padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#f8fafc", outline: "none", fontFamily: "inherit" }} />
                 </div>
@@ -995,16 +978,8 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
               {shapes.length === 0 && <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8", fontSize: 13 }}>No shapes yet.</div>}
               {shapes.map(s => (
                 <div key={s.id} onClick={() => { setSelectedId(s.id); setTab("edit"); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, cursor: "pointer", background: selectedId === s.id ? "#f1f5f9" : "transparent", border: selectedId === s.id ? "1px solid #e2e8f0" : "1px solid transparent" }}>
-                  <input type="text" value={s.tag || ""} maxLength={3} title="Letter shown on the floorplan" placeholder="–"
-                    onClick={e => e.stopPropagation()} onFocus={() => setSelectedId(s.id)}
-                    onChange={e => updateShape(s.id, { tag: e.target.value.toUpperCase() })}
-                    style={{ width: 30, padding: "3px 2px", textAlign: "center", fontWeight: 700, fontSize: 13, color: s.color, border: `1px solid ${s.color}66`, borderRadius: 5, background: "#fff", outline: "none", fontFamily: "inherit", flexShrink: 0 }} />
-                  <input type="text" value={s.label} title="Rename"
-                    onClick={e => e.stopPropagation()} onFocus={() => setSelectedId(s.id)}
-                    onChange={e => updateShape(s.id, { label: e.target.value })}
-                    style={{ fontSize: 13, color: "#0f172a", flex: 1, minWidth: 0, padding: "3px 6px", border: "1px solid transparent", borderRadius: 5, background: "transparent", outline: "none", fontFamily: "inherit", textOverflow: "ellipsis" }}
-                    onMouseEnter={e => e.target.style.border = "1px solid #e2e8f0"} onMouseLeave={e => { if (document.activeElement !== e.target) e.target.style.border = "1px solid transparent"; }}
-                    onBlurCapture={e => e.target.style.border = "1px solid transparent"} />
+                  <div style={{ width: 14, height: 14, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, color: "#0f172a", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
                   <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace", flexShrink: 0 }}>{fmtFtIn(s.w)}×{fmtFtIn(s.h)}{s.rotation ? ` ↻${s.rotation}°` : ""}</span>
                   <button onClick={e => { e.stopPropagation(); deleteShape(s.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#cbd5e1", fontSize: 14, padding: "0 2px" }}>×</button>
                 </div>
@@ -1061,8 +1036,7 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
                 const isSel = s.id === selectedId;
                 const { bw, bh } = getRotatedBounds(s.w, s.h, s.rotation);
                 const pxBW = bw * cellSize, pxBH = bh * cellSize, pxW = s.w * cellSize, pxH = s.h * cellSize;
-                const mark = s.tag || s.label || "";
-                const fs = Math.min(s.tag ? 20 : 13, Math.min(pxW / (mark.length * 0.6 + 1), pxH * 0.5));
+                const fs = Math.min(13, Math.min(pxW / (s.label.length * 0.6 + 1), pxH * 0.35));
                 return (
                   <div key={s.id} style={{ position: "absolute", left: s.x * cellSize, top: s.y * cellSize, width: pxBW, height: pxBH, zIndex: isSel ? 100 : 1 }}>
                     <div onMouseDown={e => handleShapeMouseDown(e, s)} style={{
@@ -1074,7 +1048,7 @@ export default function FloorPlanTool({ supabase, user, offlineMode, onSignOut }
                       boxShadow: isSel ? "0 2px 8px rgba(0,0,0,0.15)" : "0 1px 2px rgba(0,0,0,0.06)",
                     }}>
                       <div style={{ fontSize: Math.max(8,fs), fontWeight: 600, color: s.color, lineHeight: 1.2, padding: 2, pointerEvents: "none", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", fontFamily: "inherit" }}>
-                        {mark}
+                        {s.label}
                         {pxH>30 && <div style={{ fontSize: Math.max(7,fs-2), fontWeight: 400, opacity: 0.7, fontFamily: "monospace", marginTop: 1 }}>{fmtFtIn(s.w)}×{fmtFtIn(s.h)}</div>}
                       </div>
                     </div>
